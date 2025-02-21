@@ -1,6 +1,8 @@
-# Transcriber AI
+# OpenNotes AI
 
-Transcriber AI is a lightweight AI-powered meeting note taker that combines several open source tools into one streamlined solution.
+The Open Source AI Notetaker for Your Meetings.
+
+Transcribe, summarize, search, and analyze all your team conversations—completely open source. Own your data, customize your workflows, and get AI-powered insights.
 
 It supports the following Automatic Speech Recognition (ASR) engines:
 
@@ -13,6 +15,7 @@ It supports the following Automatic Speech Recognition (ASR) engines:
 - Multi-ASR Support: Choose between Whisper Python, Whisper.cpp, or Assembly based on your performance and quality needs.
 - Aggregate Device: Combine your system audio (e.g., microphone and virtual audio devices) for comprehensive audio capture.
 - Command Line and Web Interface: Interact with your transcripts either via CLI or a web server.
+- Fully Open Source – Customize, self-host, and integrate seamlessly into your workflow.
 
 ## Getting started
 
