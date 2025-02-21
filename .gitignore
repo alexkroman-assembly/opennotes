@@ -1,3 +1,9 @@
+*.mp3
+*.wav
+recordings/*
+transcriptions/*
+.DS_Store
+
 # Logs
 logs
 *.log

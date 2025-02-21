@@ -1,0 +1,34 @@
+{
+  "name": "transcriber",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "transcribe:whisper-python": "npx transcriber --backend whisper",
+    "transcribe:whisper-cpp": "npx transcriber --backend whisper-cli",
+    "transcribe:assembly": "npx transcriber --backend assembly",
+    "cli": "aichat --rag transcriber -f transcriptions && aichat --rag transcriber",
+    "server": "aichat --rag transcriber -f transcriptions && aichat --rag transcriber --serve",
+    "browser": "open http://localhost:8000/playground?model=default&rag=transcriber",
+    "record": "ffmpeg -f avfoundation -i \":Meeting Recorder\" -ar 16000 \"recordings/rec_$(date '+%Y%m%d-%H%M%S').wav\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/lodash": "^4.17.15",
+    "@types/node": "^22.13.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  },
+  "bin": {
+    "transcriber": "./src/transcriber.ts"
+  },
+  "dependencies": {
+    "assemblyai": "^4.9.0",
+    "commander": "^13.1.0",
+    "lodash": "^4.17.21",
+    "xbar": "^3.0.0"
+  }
+}
