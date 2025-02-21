@@ -1,21 +1,21 @@
 # OpenNotes AI
 
-The Open Source AI Notetaker for Your Meetings.
+## Open Source AI Notetaker for Your Meetings
 
-Transcribe, summarize, search, and analyze all your team conversations—completely open source. Own your data, customize your workflows, and get AI-powered insights.
+Transcribe, summarize, search, and analyze all your team conversations—completely open source. Own your data, customize workflows, and gain AI-powered insights.
 
-It supports the following Automatic Speech Recognition (ASR) engines:
+Supported Automatic Speech Recognition (ASR) Engines:
 
 - Whisper Python: Open source, slower performance, lower quality.
 - Whisper.cpp: Open source, fast performance, better quality.
-- Assembly: Fast and high quality (paid service).
+- AssemblyAI: Fast and high quality (paid service).
 
 ## Features
 
 - Multi-ASR Support: Choose between Whisper Python, Whisper.cpp, or Assembly based on your performance and quality needs.
-- Aggregate Device: Combine your system audio (e.g., microphone and virtual audio devices) for comprehensive audio capture.
-- Command Line and Web Interface: Interact with your transcripts either via CLI or a web server.
-- Fully Open Source – Customize, self-host, and integrate seamlessly into your workflow.
+- Aggregate Device: Capture system audio (e.g., microphone and virtual audio devices) for comprehensive audio recording.
+- Command Line & Web Interface: Interact with transcripts via CLI or a web server.
+- Fully Open Source: Customize, self-host, and integrate seamlessly into your workflow.
 
 ## Getting started
 
@@ -63,7 +63,7 @@ Select Devices to Include:
 - Check the box next to BlackHole 2ch and your microphone (this could be your built-in mic or an external one).
 - If available, enable “Drift Correction” for your microphone to help keep the audio in sync.
 
-Configure Settings:
+Rename the Aggregate Device:
 
 - **IMPORTANT:** Rename the aggregate device to "Meeting Recorder"
 
@@ -104,15 +104,17 @@ cp example.env .env
 
 ### Recording Audio
 
-Capture your recordings using the following command. Recordings will be saved in the recordings/ directory:
+To capture recordings, use:
 
 ```bash
 npm run record
 ```
 
+Recordings will be saved in the `recordings/` directory.
+
 ### Transcribing Recordings
 
-Select the ASR engine you want to use for transcription:
+Select the ASR engine for transcription:
 
 #### Whisper Python
 
@@ -134,7 +136,7 @@ npm run transcribe:assembly
 
 ### Interacting with Transcripts
 
-You can interact with your transcripts using the AIChat tool. Choose your preferred interface:
+Use AIChat to explore your transcripts via CLI or web interface.
 
 #### Command Line Interface (CLI)
 
@@ -146,13 +148,13 @@ npm run cli
 
 #### Web Server
 
-Start the web server to interact with your transcripts in a browser:
+Start the web server to interact with transcripts in a browser:
 
 ```bash
 npm run server
 ```
 
-Then run this command to view in your browser:
+Open in your browser:
 
 ```bash
 npm run browser
