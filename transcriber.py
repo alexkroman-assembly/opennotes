@@ -4,7 +4,7 @@ import sys
 import json
 import threading
 import time
-import requests
+import requests  # type: ignore
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
@@ -85,6 +85,7 @@ def on_open(ws):
     audio_thread.start()
 
 def on_message(ws, message):
+    """Handle incoming WebSocket messages."""
     try:
         data = json.loads(message)
         msg_type = data.get('type')
@@ -96,20 +97,29 @@ def on_message(ws, message):
         elif msg_type == "Turn":
             transcript = data.get('transcript', '')
             formatted = data.get('turn_is_formatted', False)
+            speaker = data.get('speaker', 'A')
 
-            if formatted:
-                print('\r' + ' ' * 80 + '\r', end='')
-                print(transcript)
-            else:
-                print(f"\r{transcript}", end='')
+            # Only print if we have actual new content
+            if transcript.strip():
+                if formatted:
+                    # For formatted messages, print on a new line
+                    print(f"\nSpeaker {speaker}: {transcript}")
+                else:
+                    # For partial updates, use carriage return to update the same line
+                    print(f"\rSpeaker {speaker}: {transcript}", end='', flush=True)
         elif msg_type == "Termination":
             audio_duration = data.get('audio_duration_seconds', 0)
             session_duration = data.get('session_duration_seconds', 0)
             print(f"\nSession Terminated: Audio Duration={audio_duration}s, Session Duration={session_duration}s")
+        else:
+            print(f"\nReceived message type: {msg_type}")
+            print(f"Message data: {data}")
     except json.JSONDecodeError as e:
         print(f"Error decoding message: {e}")
+        print(f"Raw message: {message}")
     except Exception as e:
         print(f"Error handling message: {e}")
+        print(f"Raw message: {message}")
 
 def on_error(ws, error):
     """Called when a WebSocket error occurs."""
@@ -134,13 +144,38 @@ def on_close(ws, close_status_code, close_msg):
         audio_thread.join(timeout=1.0)
 
 def record_audio(output_dir: Path) -> None:
-    """Record audio using ffmpeg and stream to AssemblyAI."""
+    """Record audio using ffmpeg, save to file, and stream to AssemblyAI."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create a temporary WAV file for the recording
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    temp_audio_file = output_dir / f"recording_{timestamp}.wav"
+    
+    # Modified ffmpeg command to save to file while streaming
+    FFMPEG_CMD_SAVE = [
+        "ffmpeg",
+        "-f", "avfoundation",
+        "-i", ":Meeting Recorder",
+        "-ar", "16000",
+        "-ac", "1",
+        "-f", "s16le",
+        "-"
+    ]
+    
+    FFMPEG_CMD_FILE = [
+        "ffmpeg",
+        "-f", "avfoundation",
+        "-i", ":Meeting Recorder",
+        "-ar", "16000",
+        "-ac", "1",
+        "-f", "wav",
+        str(temp_audio_file)
+    ]
     
     global ws_app
 
     def stream_ffmpeg_audio(ws):
-        process = subprocess.Popen(FFMPEG_CMD, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        process = subprocess.Popen(FFMPEG_CMD_SAVE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         try:
             print("Starting ffmpeg audio streaming...")
             while not stop_event.is_set():
@@ -161,6 +196,10 @@ def record_audio(output_dir: Path) -> None:
         audio_thread = threading.Thread(target=stream_ffmpeg_audio, args=(ws,))
         audio_thread.daemon = True
         audio_thread.start()
+
+    # Start the file recording process
+    file_process = subprocess.Popen(FFMPEG_CMD_FILE, stderr=subprocess.DEVNULL)
+    print("Started recording to", temp_audio_file)
 
     ws_app = websocket.WebSocketApp(
         API_ENDPOINT,
@@ -199,6 +238,23 @@ def record_audio(output_dir: Path) -> None:
             ws_app.close()
         ws_thread.join(timeout=2.0)
     finally:
+        # Stop the file recording process
+        file_process.terminate()
+        file_process.wait()
+        print("Recording stopped.")
+        
+        # Process the recorded file through transcription
+        if temp_audio_file.exists():
+            print("\nProcessing recorded file through transcription pipeline...")
+            transcribe_file(temp_audio_file, output_dir)
+            
+            # Clean up the temporary file
+            try:
+                temp_audio_file.unlink()
+                print("Cleaned up temporary recording file.")
+            except Exception as e:
+                print(f"Warning: Could not delete temporary file: {e}")
+        
         print("Cleanup complete. Exiting.")
 
 def get_output_paths(base_path: Path, output_dir: Path) -> Tuple[Path, Path]:
@@ -290,7 +346,7 @@ def transcribe_file(file_path: Path, output_dir: Path) -> None:
 
         # Save summary
         summary = transcript_data.get("summary", "No summary available.")
-        summary_file.write_text(f"LLM Transcript Summary:\n{summary}")
+        summary_file.write_text(summary)
         print(f"Summary saved to {summary_file}")
 
     except Exception as e:
