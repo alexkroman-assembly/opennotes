@@ -214,15 +214,15 @@ def on_message(ws, message):
             if transcript.strip():  # Only print if we have content
                 # Show text based on format preference
                 if formatted:
-                    # Show final transcription on a new line
-                    console.print(transcript)
+                    # Show final transcription on a new line with green color
+                    console.print(f"[green]✓ {transcript}[/]")
                     # Always save formatted text to file
                     if current_streaming_file:
                         with open(current_streaming_file, "a") as f:
                             f.write(f"{transcript}\n")
                 elif show_partials:  # Only show partials if enabled
-                    # Show partial on a new line
-                    console.print(transcript)
+                    # Show partial on a new line with yellow color and a different prefix
+                    console.print(f"[yellow]⟳ {transcript}[/]")
         elif msg_type == "Termination":
             audio_duration = data.get('audio_duration_seconds', 0)
             session_duration = data.get('session_duration_seconds', 0)
