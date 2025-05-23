@@ -54,6 +54,8 @@ recorded_frames: List[bytes] = []  # Store audio frames for WAV file
 current_device_id: Optional[int] = None  # Store the current device ID
 current_streaming_file: Optional[Path] = None  # Store the current streaming file path
 show_partials: bool = True  # Control whether to show partial transcriptions
+current_session_dir: Optional[Path] = None  # Will be set when session begins
+current_session_id: Optional[str] = None  # Store the current session ID
 
 def get_input_device_id(device_name: str) -> Optional[int]:
     """Get the device ID for a given device name."""
@@ -189,17 +191,20 @@ def on_message(ws, message):
             session_id = data.get('id')
             expires_at = data.get('expires_at')
 
-            # Create streaming output file when session begins
-            global current_streaming_file
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            current_streaming_file = Path("recordings") / f"streaming_{timestamp}.txt"
-            current_streaming_file.parent.mkdir(parents=True, exist_ok=True)
+            # Create session-specific directory
+            global current_streaming_file, current_session_dir, current_session_id
+            current_session_id = session_id
+            current_session_dir = Path("recordings") / session_id
+            current_session_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create streaming output file in session directory
+            current_streaming_file = current_session_dir / f"streaming-{session_id}.txt"
             with open(current_streaming_file, "w") as f:
                 f.write(f"Session ID: {session_id}\n")
                 f.write(f"Started at: {datetime.fromtimestamp(expires_at)}\n\n")
                 console.print(f"[bold green]Session began:[/] ID={session_id}")
                 console.print(f"[bold green]Expires at:[/] {datetime.fromtimestamp(expires_at)}")
-                console.print(f"[bold green]Streaming output will be saved to:[/] {current_streaming_file}")
+                console.print(f"[bold green]Session directory:[/] {current_session_dir}")
                 console.print("[green]Recording started. Press Ctrl+C to stop.[/]")
         elif msg_type == "Turn":
             transcript = data.get('transcript', '')
@@ -258,10 +263,6 @@ def save_audio_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
         console.print("No audio data recorded.")
         return None
     
-    # Generate filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = output_dir / f"recorded_audio_{timestamp}.wav"
-    
     try:
         # Get device info for sample rate and channels
         if current_device_id is not None:
@@ -284,7 +285,8 @@ def save_audio_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
             channels=channels
         )
         
-        # Export to WAV
+        # Export to WAV in the session directory
+        filename = output_dir / f"audio-{current_session_id}.wav"
         audio_segment.export(str(filename), format="wav")
         
         console.print(f"Audio saved to: {filename}")
@@ -307,10 +309,11 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
         output_dir = Path("recordings")
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    global stream, ws_app, recorded_frames, current_device_id, show_partials, API_ENDPOINT
+    global stream, ws_app, recorded_frames, current_device_id, show_partials, API_ENDPOINT, current_session_dir
     stop_event.clear()
     recorded_frames = []  # Reset recorded frames
     show_partials = show_partials_flag  # Set the global flag
+    current_session_dir = None  # Will be set when session begins
     
     # Get device ID if device name is provided
     current_device_id = None
@@ -374,16 +377,17 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
         finally:
             console.print("[yellow]Recording stopped.[/]")
             # Save the WAV file
-            audio_file = save_audio_file(output_dir, recorded_frames)
-            if audio_file:
-                # Automatically transcribe the saved file
-                console.print("\n[yellow]Starting automatic transcription...[/]")
-                try:
-                    transcript = transcribe_file(audio_file)
-                    # Save transcript in the same directory as the recording
-                    save_transcript(transcript, output_dir)
-                except Exception as e:
-                    console.print(f"[red]Error during transcription: {e}[/]")
+            if current_session_dir:
+                audio_file = save_audio_file(current_session_dir, recorded_frames)
+                if audio_file:
+                    # Automatically transcribe the saved file
+                    console.print("\n[yellow]Starting automatic transcription...[/]")
+                    try:
+                        transcript = transcribe_file(audio_file)
+                        # Save transcript in the session directory
+                        save_transcript(transcript, current_session_dir)
+                    except Exception as e:
+                        console.print(f"[red]Error during transcription: {e}[/]")
 
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {e}[/]")
@@ -511,8 +515,7 @@ def run_lemur_task(transcript_id: str) -> Dict[str, Any]:
 
 def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
     """Save transcript results to files."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_path = output_dir / f"transcript_{timestamp}"
+    base_path = output_dir / f"transcript-{current_session_id}"
     
     # Save full transcript
     with open(f"{base_path}_full.json", "w") as f:
@@ -548,7 +551,7 @@ def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
             lemur_result = run_lemur_task(transcript["id"])
             
             # Save Lemur response
-            lemur_path = f"{base_path}_lemur_summary.txt"
+            lemur_path = output_dir / f"lemur_summary-{current_session_id}.txt"
             with open(lemur_path, "w") as f:
                 f.write(lemur_result["response"])
             console.print(f"- Lemur summary: {lemur_path}")
