@@ -14,7 +14,7 @@ A simple command-line tool for real-time audio transcription using AssemblyAI.
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/opennotes.git
+git clone https://github.com/alexkroman-assembly/opennotes.git
 cd opennotes
 ```
 
@@ -30,13 +30,26 @@ pip install -r requirements.txt
 ASSEMBLYAI_API_KEY=your_api_key_here
 ```
 
-## Usage
-
-1. List available audio devices:
+1. (macOS only) Install audio dependencies:
 
 ```bash
-python transcriber.py devices
+brew install portaudio blackhole-2ch
 ```
+
+## Setting Up System Audio Recording (macOS)
+
+To record your computer's audio:
+
+1. Open Audio MIDI Setup (press Cmd+Space and search for it)
+2. Click the "+" button in the bottom left and select "Create Multi-Output Device"
+3. Name it "System Audio"
+4. Select both "BlackHole 2ch" and your speakers in the right panel
+5. Make sure "BlackHole 2ch" is checked
+6. Close Audio MIDI Setup
+
+Now when you run the recorder, select "BlackHole 2ch" as your input device to capture system audio.
+
+## Usage
 
 1. Start recording:
 
@@ -56,14 +69,16 @@ The tool creates several files in the `recordings` directory:
 
 - `recorded_audio_TIMESTAMP.mp3` - The recorded audio
 - `transcript_TIMESTAMP_text.txt` - Plain text transcript
-- `transcript_TIMESTAMP_summary.txt` - AI-generated summary
-- `transcript_TIMESTAMP_lemur_summary.txt` - Detailed AI analysis
+- `transcript_TIMESTAMP_summary.txt` - Default AI-generated summary
+- `transcript_TIMESTAMP_lemur_summary.txt` - Lemur generated summary
 
 ## Requirements
 
 - Python 3.8+
 - AssemblyAI API key
 - Audio input device (microphone)
+- PortAudio (for audio capture)
+- BlackHole 2ch (macOS only, for system audio capture)
 
 ## License
 

@@ -89,7 +89,7 @@ def list_devices() -> None:
 
 def on_open(ws):
     """Called when the WebSocket connection is established."""
-    console.print(f"Connected to: {API_ENDPOINT}")
+    console.print(f"Connected to: {API_ENDPOINT}\n")
 
     def stream_audio():
         global stream
@@ -272,7 +272,7 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
     
     try:
         # Initialize WebSocket connection
-        console.print("\n[yellow]Initializing WebSocket connection...[/]")
+        console.print("\n[yellow]Initializing WebSocket connection...[/]\n")
         ws_app = websocket.WebSocketApp(
             API_ENDPOINT,
             header={"Authorization": API_KEY},
