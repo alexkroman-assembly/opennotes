@@ -14,6 +14,7 @@ import sounddevice as sd  # type: ignore
 import numpy as np  # type: ignore
 import websocket  # type: ignore
 import librosa  # type: ignore
+from pydub import AudioSegment  # type: ignore
 from rich.console import Console  # type: ignore
 from typing import Optional, List, Dict, Any
 import wave
@@ -36,14 +37,10 @@ if not API_KEY:
     raise ValueError("Missing AssemblyAI API key. Set ASSEMBLYAI_API_KEY in .env")
 
 # Audio Configuration
-FRAMES_PER_BUFFER = 800  # 50ms of audio (0.05s * 16000Hz)
-SAMPLE_RATE = 16000
-CHANNELS = 2
-DTYPE = np.int16
+DTYPE = np.int16  # Keep this as it's a fundamental type
 
 # Streaming API Configuration
 CONNECTION_PARAMS = {
-    "sample_rate": SAMPLE_RATE,
     "formatted_finals": True,
 }
 API_ENDPOINT_BASE_URL = "wss://streaming.assemblyai.com/v3/ws"
@@ -89,8 +86,8 @@ def process_audio_data(indata: np.ndarray, for_streaming: bool = False) -> bytes
     """Process audio data for both streaming and recording."""
     if for_streaming:
         # For streaming, we need mono audio at 16kHz with PCM S16LE encoding
-        # Convert to float32 for processing
-        audio_float = indata.astype(np.float32)
+        # Convert to float32 for processing, properly scaled
+        audio_float = indata.astype(np.float32) / 32768.0  # Scale to [-1.0, 1.0]
         
         if audio_float.shape[1] > 1:  # If we have multiple channels
             audio_data = librosa.to_mono(audio_float.T)
@@ -98,13 +95,8 @@ def process_audio_data(indata: np.ndarray, for_streaming: bool = False) -> bytes
             # If already mono, just flatten
             audio_data = audio_float.flatten()
             
-        # Ensure the data is in the correct range for int16
-        audio_data = np.clip(audio_data, -1.0, 1.0)
-        
-        # Convert to int16 (PCM S16LE)
-        audio_data = (audio_data * 32767).astype(np.int16)
-        
-        # console.print(f"[yellow]Streaming audio shape: {audio_data.shape}, dtype: {audio_data.dtype}[/]")
+        # Convert back to int16, properly scaled
+        audio_data = np.clip(audio_data * 32767, -32768, 32767).astype(np.int16)
     else:
         # For recording, keep all channels but ensure proper shape
         audio_data = indata.reshape(-1, indata.shape[1])
@@ -124,13 +116,18 @@ def on_open(ws):
             
             device_info = sd.query_devices(current_device_id)
             channels = device_info['max_input_channels']  # Use all available channels
-            console.print(f"[green]Using {channels} channels for device[/]")
+            sample_rate = int(device_info['default_samplerate'])
+            frames_per_buffer = int(sample_rate * 0.05)  # 50ms of audio
             
-            if channels > 2:
-                console.print("[yellow]Note: Mixing down to stereo for streaming, preserving all channels for recording[/]")
+            console.print(f"[green]Using {channels} channels for device[/]")
+            console.print(f"[green]Device sample rate: {sample_rate} Hz[/]")
+            console.print(f"[green]Frame size: {frames_per_buffer} samples[/]")
+            
+            if channels > 1:
+                console.print("[yellow]Note: Mixing down to mono for streaming, preserving all channels for recording[/]")
             
             with sd.InputStream(
-                samplerate=SAMPLE_RATE,
+                samplerate=sample_rate,
                 channels=channels,
                 dtype=DTYPE,
                 device=current_device_id,
@@ -254,42 +251,32 @@ def save_audio_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
     filename = output_dir / f"recorded_audio_{timestamp}.wav"
     
     try:
-        # Get channel count from the first frame
-        if recorded_frames:
-            first_frame = np.frombuffer(recorded_frames[0], dtype=DTYPE)
-            # Calculate number of channels based on frame size and samples per frame
-            samples_per_frame = FRAMES_PER_BUFFER
-            num_channels = first_frame.size // samples_per_frame
-            if num_channels == 0:  # Fallback if calculation fails
-                num_channels = CHANNELS
+        # Get device info for sample rate and channels
+        if current_device_id is not None:
+            device_info = sd.query_devices(current_device_id)
+            sample_rate = int(device_info['default_samplerate'])
+            channels = device_info['max_input_channels']
         else:
-            num_channels = CHANNELS
+            sample_rate = 48000  # Default to standard sample rate if no device
+            channels = 2  # Default to stereo if no device
             
-        console.print(f"[green]Saving {num_channels} channel audio...[/]")
-        
         # Combine all frames into a single array
         all_frames = b''.join(recorded_frames)
         audio_data = np.frombuffer(all_frames, dtype=DTYPE)
         
-        # Calculate total number of samples per channel
-        total_samples = len(audio_data) // num_channels
-        if total_samples * num_channels != len(audio_data):
-            console.print(f"[yellow]Warning: Audio data length ({len(audio_data)}) is not divisible by number of channels ({num_channels})[/]")
-            # Truncate to nearest complete frame
-            total_samples = len(audio_data) // num_channels
-            audio_data = audio_data[:total_samples * num_channels]
+        # Create AudioSegment from numpy array
+        audio_segment = AudioSegment(
+            audio_data.tobytes(),
+            frame_rate=sample_rate,
+            sample_width=2,  # 16-bit
+            channels=channels
+        )
         
-        # Reshape the data to ensure proper channel layout
-        audio_data = audio_data.reshape(total_samples, num_channels)
-        
-        with wave.open(str(filename), 'wb') as wf:
-            wf.setnchannels(num_channels)
-            wf.setsampwidth(2)  # 16-bit = 2 bytes
-            wf.setframerate(SAMPLE_RATE)
-            wf.writeframes(audio_data.tobytes())
+        # Export to WAV
+        audio_segment.export(str(filename), format="wav")
         
         console.print(f"Audio saved to: {filename}")
-        console.print(f"Duration: {total_samples / SAMPLE_RATE:.2f} seconds")
+        console.print(f"Duration: {len(audio_segment) / 1000:.2f} seconds")
         return filename
         
     except Exception as e:
@@ -298,9 +285,7 @@ def save_audio_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
         console.print(f"- Number of frames: {len(recorded_frames)}")
         if recorded_frames:
             console.print(f"- First frame size: {len(recorded_frames[0])} bytes")
-            console.print(f"- Calculated channels: {num_channels}")
-            console.print(f"- Total samples: {len(audio_data) if 'audio_data' in locals() else 'N/A'}")
-            console.print(f"- Samples per channel: {total_samples if 'total_samples' in locals() else 'N/A'}")
+            console.print(f"- Device channels: {channels}")
         return None
 
 def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] = None, show_partials_flag: bool = False) -> None:
