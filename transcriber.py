@@ -157,19 +157,11 @@ def on_message(ws, message):
             with open(current_streaming_file, "w") as f:
                 f.write(f"Session ID: {session_id}\n")
                 f.write(f"Started at: {datetime.fromtimestamp(expires_at)}\n\n")
-                console.print(Panel(
-                    f"[bold green]Session began:[/] ID={session_id}\n"
-                    f"[bold green]Expires at:[/] {datetime.fromtimestamp(expires_at)}\n"
-                    f"[bold green]Streaming output will be saved to:[/]{current_streaming_file}",
-                    title="🎙️ Session Started",
-                border_style="green",
-                padding=(1, 2)
-            ))
-            console.print(Panel(
-                "[green]Recording started. Press Ctrl+C to stop.[/]",
-                border_style="green",
-                padding=(1, 2)
-            ))
+                console.print(f"[bold green]Session began:[/] ID={session_id}")
+                console.print(f"[bold green]Expires at:[/] {datetime.fromtimestamp(expires_at)}")
+                console.print(f"[bold green]Streaming output will be saved to:[/] {current_streaming_file}")
+                console.print("\n[bold green]🎙️ Session Started[/]")
+                console.print("[green]Recording started. Press Ctrl+C to stop.[/]")
         elif msg_type == "Turn":
             transcript = data.get('transcript', '')
             formatted = data.get('turn_is_formatted', False)
@@ -189,14 +181,10 @@ def on_message(ws, message):
         elif msg_type == "Termination":
             audio_duration = data.get('audio_duration_seconds', 0)
             session_duration = data.get('session_duration_seconds', 0)
-            console.print(Panel(
-                f"[bold red]Session Terminated[/]\n\n"
-                f"[green]Audio Duration:[/] {audio_duration:.1f}s\n"
-                f"[green]Session Duration:[/] {session_duration:.1f}s",
-                title="⏹️ Recording Complete",
-                border_style="red",
-                padding=(1, 2)
-            ))
+            console.print(f"[bold red]Session Terminated[/]")
+            console.print(f"[green]Audio Duration:[/] {audio_duration:.1f}s")
+            console.print(f"[green]Session Duration:[/] {session_duration:.1f}s")
+            console.print("\n[bold red]⏹️ Recording Complete[/]")
             # Add session end info to streaming file
             if current_streaming_file:
                 with open(current_streaming_file, "a") as f:
@@ -204,11 +192,7 @@ def on_message(ws, message):
                     f.write(f"Audio Duration: {audio_duration:.1f}s\n")
                     f.write(f"Session Duration: {session_duration:.1f}s\n")
     except Exception as e:
-        console.print(Panel(
-            f"[bold red]Error handling message:[/]\n{str(e)}",
-            border_style="red",
-            padding=(1, 2)
-        ))
+        console.print(f"[bold red]Error handling message:[/] {str(e)}")
 
 def on_error(ws, error):
     """Called when a WebSocket error occurs."""
@@ -486,11 +470,7 @@ def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
     # Display the full transcript
     if "text" in transcript and transcript["text"]:
         console.print("\n[bold blue]Full Transcript:[/]")
-        console.print(Panel(
-            transcript["text"],
-            border_style="blue",
-            padding=(1, 2)
-        ))
+        console.print(transcript["text"])
         
         # Run Lemur task and save results
         try:
@@ -505,11 +485,7 @@ def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
             
             # Display Lemur response
             console.print("\n[bold blue]Lemur Summary:[/]")
-            console.print(Panel(
-                lemur_result["response"],
-                border_style="green",
-                padding=(1, 2)
-            ))
+            console.print(lemur_result["response"])
         except Exception as e:
             console.print(f"[red]Error running Lemur task: {e}[/]")
 
