@@ -369,13 +369,13 @@ def transcribe_file(file_path: Path, options: Optional[Dict[str, Any]] = None, u
 
 def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
     """Save transcript results to files."""
-    base_path = output_dir / f"transcript-{current_session_id}"
+    base_path = output_dir / f"universal-{current_session_id}"
     
     # Save text only if available
     if "text" in transcript and transcript["text"]:
-        with open(f"{base_path}_text.txt", "w") as f:
+        with open(f"{base_path}.txt", "w") as f:
             f.write(transcript["text"])
-        console.print(f"[green]✓ Universal transcript text:[/] {base_path}_text.txt")
+        console.print(f"[green]✓ Universal transcript text:[/] {base_path}.txt")
     else:
         console.print("[yellow]No text content found in transcript[/]")
     
@@ -390,7 +390,7 @@ def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
             lemur_result = run_lemur_task(transcript["id"])
             
             # Save Lemur response
-            lemur_path = output_dir / f"lemur_summary-{current_session_id}.txt"
+            lemur_path = output_dir / f"universal-lemur-{current_session_id}.txt"
             with open(lemur_path, "w") as f:
                 f.write(lemur_result["response"])
             console.print(f"[green]✓ Universal Lemur summary:[/] {lemur_path}")
@@ -509,7 +509,7 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
                                 slam_lemur_result = run_lemur_task(slam_transcript["id"])
                                 
                                 # Save SLAM Lemur response
-                                slam_lemur_path = current_session_dir / f"slam_lemur_summary-{current_session_id}.txt"
+                                slam_lemur_path = current_session_dir / f"slam-lemur-{current_session_id}.txt"
                                 with open(slam_lemur_path, "w") as f:
                                     f.write(slam_lemur_result["response"])
                                 console.print(f"[green]✓ SLAM Lemur summary:[/] {slam_lemur_path}")
