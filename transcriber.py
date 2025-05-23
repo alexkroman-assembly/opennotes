@@ -49,6 +49,34 @@ stream = None
 ws_app = None
 audio_thread = None
 recorded_frames: List[bytes] = []  # Store audio frames for WAV file
+current_device_id: Optional[int] = None  # Store the current device ID
+current_streaming_file: Optional[Path] = None  # Store the current streaming file path
+show_partials: bool = False  # Control whether to show partial transcriptions
+
+def get_input_device_id(device_name: str) -> Optional[int]:
+    """Get the device ID for a given device name."""
+    devices = sd.query_devices()
+    for i, device in enumerate(devices):
+        if device['name'] == device_name and device['max_input_channels'] > 0:
+            return i
+    return None
+
+def list_devices() -> None:
+    """List all available audio input devices."""
+    devices = sd.query_devices()
+    
+    console.print("\n[bold blue]Input Devices:[/]")
+    input_devices = [(i, device) for i, device in enumerate(devices) if device['max_input_channels'] > 0]
+    
+    if not input_devices:
+        console.print("[yellow]No input devices found.[/]")
+        return
+        
+    for i, device in input_devices:
+        console.print(f"[green]{i}: {device['name']}[/]")
+        console.print(f"    Channels: {device['max_input_channels']}")
+        console.print(f"    Sample Rate: {device['default_samplerate']} Hz")
+        console.print()
 
 def on_open(ws):
     """Called when the WebSocket connection is established."""
@@ -63,6 +91,7 @@ def on_open(ws):
                 samplerate=SAMPLE_RATE,
                 channels=CHANNELS,
                 dtype=DTYPE,
+                device=current_device_id,  # Use the global device ID
                 callback=audio_callback
             ):
                 while not stop_event.is_set():
@@ -101,15 +130,29 @@ def on_message(ws, message):
                 title="Session Started",
                 border_style="green"
             ))
+            # Create streaming output file when session begins
+            global current_streaming_file
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            current_streaming_file = Path("recordings") / f"streaming_{timestamp}.txt"
+            current_streaming_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(current_streaming_file, "w") as f:
+                f.write(f"Session ID: {session_id}\n")
+                f.write(f"Started at: {datetime.fromtimestamp(expires_at)}\n\n")
+            console.print(f"[green]Streaming output will be saved to: {current_streaming_file}[/]")
         elif msg_type == "Turn":
             transcript = data.get('transcript', '')
             formatted = data.get('turn_is_formatted', False)
 
             if transcript.strip():  # Only print if we have content
+                # Show text based on format preference
                 if formatted:
-                    console.print(f"\n[green]{transcript}[/]")
-                else:
-                    print(f"\r{transcript}", end='', flush=True)
+                    console.print(f"[bold green]{transcript}[/]")
+                    # Always save formatted text to file
+                    if current_streaming_file:
+                        with open(current_streaming_file, "a") as f:
+                            f.write(f"{transcript}\n")
+                elif show_partials:  # Only show partials if enabled
+                    console.print(f"[yellow]{transcript}[/]")
         elif msg_type == "Termination":
             audio_duration = data.get('audio_duration_seconds', 0)
             session_duration = data.get('session_duration_seconds', 0)
@@ -118,6 +161,12 @@ def on_message(ws, message):
                 title="Session Terminated",
                 border_style="red"
             ))
+            # Add session end info to streaming file
+            if current_streaming_file:
+                with open(current_streaming_file, "a") as f:
+                    f.write(f"\nSession ended at: {datetime.now()}\n")
+                    f.write(f"Audio Duration: {audio_duration}s\n")
+                    f.write(f"Session Duration: {session_duration}s\n")
     except Exception as e:
         console.print(f"[red]Error handling message: {e}[/]")
 
@@ -165,16 +214,30 @@ def save_wav_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
         console.print(f"Error saving WAV file: {e}")
         return None
 
-def record_audio(output_dir: Optional[Path] = None) -> None:
+def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] = None, show_partials_flag: bool = False) -> None:
     """Record audio using sounddevice and stream to AssemblyAI."""
     # Ensure output_dir is set to 'recordings' if not provided
     if output_dir is None:
         output_dir = Path("recordings")
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    global stream, ws_app, recorded_frames
+    global stream, ws_app, recorded_frames, current_device_id, show_partials
     stop_event.clear()
     recorded_frames = []  # Reset recorded frames
+    show_partials = show_partials_flag  # Set the global flag
+    
+    # Get device ID if device name is provided
+    current_device_id = None
+    if device_name:
+        current_device_id = get_input_device_id(device_name)
+        if current_device_id is None:
+            console.print(f"[red]Error: Input device '{device_name}' not found.[/]")
+            console.print("\n[yellow]Available input devices:[/]")
+            for device in sd.query_devices():
+                if device['max_input_channels'] > 0:
+                    console.print(f"- {device['name']}")
+            return
+        console.print(f"[green]Using input device: {device_name}[/]")
     
     try:
         # Initialize WebSocket connection
@@ -364,6 +427,31 @@ def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
     console.print(f"\n[green]Transcript saved to:[/]")
     console.print(f"- Full transcript: {base_path}_full.json")
 
+def prompt_device_selection() -> Optional[str]:
+    """Prompt the user to select an input device."""
+    devices = sd.query_devices()
+    input_devices = [(i, device) for i, device in enumerate(devices) if device['max_input_channels'] > 0]
+    
+    if not input_devices:
+        console.print("[red]No input devices found.[/]")
+        return None
+    
+    console.print("\n[bold blue]Available Input Devices:[/]")
+    for idx, (i, device) in enumerate(input_devices, 1):
+        console.print(f"[green]{idx}. {device['name']}[/]")
+        console.print(f"    Channels: {device['max_input_channels']}")
+        console.print(f"    Sample Rate: {device['default_samplerate']} Hz")
+        console.print()
+    
+    while True:
+        try:
+            choice = typer.prompt("Select a device number", type=int, default=1)
+            if 1 <= choice <= len(input_devices):
+                return input_devices[choice - 1][1]['name']  # Return the device name
+            console.print(f"[red]Please enter a number between 1 and {len(input_devices)}[/]")
+        except ValueError:
+            console.print("[red]Please enter a valid number[/]")
+
 app = typer.Typer(help="Audio recording and transcription tool.")
 
 @app.command()
@@ -376,7 +464,21 @@ def record(
 ) -> None:
     """Record audio using sounddevice."""
     try:
-        record_audio(output_dir)
+        # Prompt for device selection
+        device = prompt_device_selection()
+        if device is None:
+            console.print("[red]No device selected. Exiting.[/]")
+            sys.exit(1)
+        console.print(f"\n[green]Selected device: {device}[/]")
+        
+        # Prompt for partials preference with 'yes' as default
+        show_partials = typer.confirm("Show partial transcriptions as they come in?", default=True)
+        if show_partials:
+            console.print("[green]Will show partial transcriptions in yellow[/]")
+        else:
+            console.print("[green]Will show only final transcriptions[/]")
+            
+        record_audio(output_dir, device, show_partials)
     except Exception as e:
         console.print(f"[red]Error: {e}[/]")
         sys.exit(1)
@@ -405,6 +507,15 @@ def transcribe(
             console.print("\n[bold blue]Summary:[/]")
             console.print(transcript["summary"])
         
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/]")
+        sys.exit(1)
+
+@app.command()
+def devices() -> None:
+    """List all available audio input devices."""
+    try:
+        list_devices()
     except Exception as e:
         console.print(f"[red]Error: {e}[/]")
         sys.exit(1)
