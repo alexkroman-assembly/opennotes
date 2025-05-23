@@ -13,11 +13,9 @@ from dotenv import load_dotenv  # type: ignore
 import sounddevice as sd  # type: ignore
 import numpy as np  # type: ignore
 import websocket  # type: ignore
-import librosa  # type: ignore
 from pydub import AudioSegment  # type: ignore
 from rich.console import Console  # type: ignore
 from typing import Optional, List, Dict, Any
-import wave
 from requests.adapters import HTTPAdapter  # type: ignore
 from urllib3.util.retry import Retry  # type: ignore
 import pyfiglet  # type: ignore
@@ -40,7 +38,7 @@ if not API_KEY:
 DTYPE = np.int16  # Keep this as it's a fundamental type
 
 # Streaming API Configuration
-CONNECTION_PARAMS = {
+CONNECTION_PARAMS: Dict[str, Any] = {
     "formatted_finals": True,
 }
 API_ENDPOINT_BASE_URL = "wss://streaming.assemblyai.com/v3/ws"
@@ -90,22 +88,28 @@ def process_audio_data(indata: np.ndarray, for_streaming: bool = False) -> bytes
         audio_float = indata.astype(np.float32) / 32768.0  # Scale to [-1.0, 1.0]
         
         if audio_float.shape[1] > 1:  # If we have multiple channels
-            audio_data = librosa.to_mono(audio_float.T)
+            # Mix down to mono by averaging channels
+            audio_data = np.mean(audio_float, axis=1)
         else:
             # If already mono, just flatten
             audio_data = audio_float.flatten()
             
         # Convert back to int16, properly scaled
         audio_data = np.clip(audio_data * 32767, -32768, 32767).astype(np.int16)
+        
+        # Ensure we have data
+        if len(audio_data) == 0:
+            return b''
+            
+        return audio_data.tobytes()
     else:
         # For recording, keep all channels but ensure proper shape
         audio_data = indata.reshape(-1, indata.shape[1])
-    
-    return audio_data.tobytes()
+        return audio_data.tobytes()
 
 def on_open(ws):
     """Called when the WebSocket connection is established."""
-    console.print(f"Connected to: {API_ENDPOINT}\n")
+    console.print("Connected to: " + API_ENDPOINT + "\n")
 
     def stream_audio():
         global stream
@@ -118,6 +122,11 @@ def on_open(ws):
             channels = device_info['max_input_channels']  # Use all available channels
             sample_rate = int(device_info['default_samplerate'])
             frames_per_buffer = int(sample_rate * 0.05)  # 50ms of audio
+            
+            # Update streaming API parameters with current sample rate
+            global API_ENDPOINT
+            CONNECTION_PARAMS["sample_rate"] = sample_rate
+            API_ENDPOINT = f"{API_ENDPOINT_BASE_URL}?{urlencode(CONNECTION_PARAMS)}"
             
             console.print(f"[green]Using {channels} channels for device[/]")
             console.print(f"[green]Device sample rate: {sample_rate} Hz[/]")
@@ -156,15 +165,18 @@ def audio_callback(indata, frames, time, status):
             recording_audio = process_audio_data(indata, for_streaming=False)
             
             # Send mono audio to WebSocket
-            ws_app.send(streaming_audio, websocket.ABNF.OPCODE_BINARY)
+            if streaming_audio:  # Only send if we have data
+                ws_app.send(streaming_audio, websocket.ABNF.OPCODE_BINARY)
             
             # Store full multi-channel audio for recording
-            recorded_frames.append(recording_audio)
+            if recording_audio:  # Only store if we have data
+                recorded_frames.append(recording_audio)
         except Exception as e:
             console.print(f"[red]Error in audio callback: {e}[/]")
-            console.print(f"[yellow]Debug info:[/]")
+            console.print("[yellow]Debug info:[/]")
             console.print(f"- Input shape: {indata.shape}")
             console.print(f"- Input dtype: {indata.dtype}")
+            console.print(f"- Streaming audio size: {len(streaming_audio) if streaming_audio else 0}")
             stop_event.set()
 
 def on_message(ws, message):
@@ -208,7 +220,7 @@ def on_message(ws, message):
         elif msg_type == "Termination":
             audio_duration = data.get('audio_duration_seconds', 0)
             session_duration = data.get('session_duration_seconds', 0)
-            console.print(f"[bold red]Session Terminated[/]")
+            console.print("[bold red]Session Terminated[/]")
             console.print(f"[green]Audio Duration:[/] {audio_duration:.1f}s")
             console.print(f"[green]Session Duration:[/] {session_duration:.1f}s")
             console.print("\n[bold red]⏹️ Recording Complete[/]")
@@ -281,7 +293,7 @@ def save_audio_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
         
     except Exception as e:
         console.print(f"[red]Error saving WAV file: {e}[/]")
-        console.print(f"[yellow]Debug info:[/]")
+        console.print("[yellow]Debug info:[/]")
         console.print(f"- Number of frames: {len(recorded_frames)}")
         if recorded_frames:
             console.print(f"- First frame size: {len(recorded_frames[0])} bytes")
@@ -295,7 +307,7 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
         output_dir = Path("recordings")
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    global stream, ws_app, recorded_frames, current_device_id, show_partials
+    global stream, ws_app, recorded_frames, current_device_id, show_partials, API_ENDPOINT
     stop_event.clear()
     recorded_frames = []  # Reset recorded frames
     show_partials = show_partials_flag  # Set the global flag
@@ -314,6 +326,14 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
         console.print(f"\n[green]Using input device: {device_name}[/]")
     
     try:
+        # Get device info and set up streaming parameters
+        if current_device_id is not None:
+            device_info = sd.query_devices(current_device_id)
+            sample_rate = int(device_info['default_samplerate'])
+            CONNECTION_PARAMS["sample_rate"] = sample_rate
+            API_ENDPOINT = f"{API_ENDPOINT_BASE_URL}?{urlencode(CONNECTION_PARAMS)}"
+            console.print(f"[green]Streaming with sample rate: {sample_rate} Hz[/]")
+        
         # Initialize WebSocket connection
         console.print("\n[yellow]Initializing WebSocket connection...[/]\n")
         ws_app = websocket.WebSocketApp(
