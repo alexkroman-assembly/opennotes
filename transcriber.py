@@ -89,12 +89,10 @@ def list_devices() -> None:
 
 def on_open(ws):
     """Called when the WebSocket connection is established."""
-    console.print("[green]WebSocket connection opened.[/]")
     console.print(f"Connected to: {API_ENDPOINT}")
 
     def stream_audio():
         global stream
-        console.print("[yellow]Starting audio streaming...[/]")
         try:
             with sd.InputStream(
                 samplerate=SAMPLE_RATE,
@@ -134,13 +132,7 @@ def on_message(ws, message):
         if msg_type == "Begin":
             session_id = data.get('id')
             expires_at = data.get('expires_at')
-            console.print(Panel(
-                f"[bold green]Session began:[/] ID={session_id}\n"
-                f"[bold green]Expires at:[/] {datetime.fromtimestamp(expires_at)}",
-                title="🎙️ Session Started",
-                border_style="green",
-                padding=(1, 2)
-            ))
+
             # Create streaming output file when session begins
             global current_streaming_file
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -149,11 +141,15 @@ def on_message(ws, message):
             with open(current_streaming_file, "w") as f:
                 f.write(f"Session ID: {session_id}\n")
                 f.write(f"Started at: {datetime.fromtimestamp(expires_at)}\n\n")
-            console.print(Panel(
-                f"[green]Streaming output will be saved to:[/]\n{current_streaming_file}",
-                border_style="blue",
+                console.print(Panel(
+                    f"[bold green]Session began:[/] ID={session_id}\n"
+                    f"[bold green]Expires at:[/] {datetime.fromtimestamp(expires_at)}\n"
+                    f"[bold green]Streaming output will be saved to:[/]{current_streaming_file}",
+                    title="🎙️ Session Started",
+                border_style="green",
                 padding=(1, 2)
             ))
+            console.print("\n[green]Recording started. Press Ctrl+C to stop.[/]\n")
         elif msg_type == "Turn":
             transcript = data.get('transcript', '')
             formatted = data.get('turn_is_formatted', False)
@@ -268,7 +264,7 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
                 if device['max_input_channels'] > 0:
                     console.print(f"- {device['name']}")
             return
-        console.print(f"[green]Using input device: {device_name}[/]")
+        console.print(f"\n[green]Using input device: {device_name}[/]")
     
     try:
         # Initialize WebSocket connection
@@ -288,7 +284,6 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
         ws_thread.start()
 
         try:
-            console.print("\n[green]Recording started. Press Ctrl+C to stop.[/]")
             while ws_thread.is_alive():
                 time.sleep(0.1)
         except KeyboardInterrupt:
@@ -547,7 +542,6 @@ def record(
         if device is None:
             console.print("[red]No device selected. Exiting.[/]")
             sys.exit(1)
-        console.print(f"\n[green]Selected device: {device}[/]")
                     
         record_audio(output_dir, device, show_partials)
     except Exception as e:
