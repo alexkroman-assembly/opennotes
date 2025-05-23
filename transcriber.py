@@ -13,6 +13,7 @@ from dotenv import load_dotenv  # type: ignore
 import sounddevice as sd  # type: ignore
 import numpy as np  # type: ignore
 import websocket  # type: ignore
+import librosa  # type: ignore
 from rich.console import Console  # type: ignore
 from typing import Optional, List, Dict, Any
 import wave
@@ -84,6 +85,32 @@ def list_devices() -> None:
         console.print(f"    Sample Rate: {device['default_samplerate']} Hz")
         console.print()
 
+def process_audio_data(indata: np.ndarray, for_streaming: bool = False) -> bytes:
+    """Process audio data for both streaming and recording."""
+    if for_streaming:
+        # For streaming, we need mono audio at 16kHz with PCM S16LE encoding
+        # Convert to float32 for processing
+        audio_float = indata.astype(np.float32)
+        
+        if audio_float.shape[1] > 1:  # If we have multiple channels
+            audio_data = librosa.to_mono(audio_float.T)
+        else:
+            # If already mono, just flatten
+            audio_data = audio_float.flatten()
+            
+        # Ensure the data is in the correct range for int16
+        audio_data = np.clip(audio_data, -1.0, 1.0)
+        
+        # Convert to int16 (PCM S16LE)
+        audio_data = (audio_data * 32767).astype(np.int16)
+        
+        # console.print(f"[yellow]Streaming audio shape: {audio_data.shape}, dtype: {audio_data.dtype}[/]")
+    else:
+        # For recording, keep all channels but ensure proper shape
+        audio_data = indata.reshape(-1, indata.shape[1])
+    
+    return audio_data.tobytes()
+
 def on_open(ws):
     """Called when the WebSocket connection is established."""
     console.print(f"Connected to: {API_ENDPOINT}\n")
@@ -98,8 +125,9 @@ def on_open(ws):
             device_info = sd.query_devices(current_device_id)
             channels = device_info['max_input_channels']  # Use all available channels
             console.print(f"[green]Using {channels} channels for device[/]")
+            
             if channels > 2:
-                console.print("[yellow]Note: Audio will be downmixed to stereo for transcription[/]")
+                console.print("[yellow]Note: Mixing down to stereo for streaming, preserving all channels for recording[/]")
             
             with sd.InputStream(
                 samplerate=SAMPLE_RATE,
@@ -123,20 +151,24 @@ def audio_callback(indata, frames, time, status):
     """Callback for audio stream."""
     if status:
         console.print(f"[yellow]Audio callback status: {status}[/]")
+    
     if not stop_event.is_set() and ws_app and ws_app.sock and ws_app.sock.connected:
-        # Convert multi-channel to stereo if needed
-        if indata.shape[1] > 2:
-            # Simple downmix to stereo by averaging channels
-            # For 3 channels: (L+R+C)/3 for left, (L+R+C)/3 for right
-            stereo_data = np.mean(indata, axis=1, keepdims=True)
-            stereo_data = np.repeat(stereo_data, 2, axis=1)  # Duplicate to create stereo
-            audio_data = stereo_data.astype(DTYPE).tobytes()
-        else:
-            audio_data = indata.tobytes()
+        try:
+            # Process audio data for streaming (mono) and recording (multi-channel)
+            streaming_audio = process_audio_data(indata, for_streaming=True)
+            recording_audio = process_audio_data(indata, for_streaming=False)
             
-        ws_app.send(audio_data, websocket.ABNF.OPCODE_BINARY)
-        # Store audio data for WAV recording
-        recorded_frames.append(audio_data)
+            # Send mono audio to WebSocket
+            ws_app.send(streaming_audio, websocket.ABNF.OPCODE_BINARY)
+            
+            # Store full multi-channel audio for recording
+            recorded_frames.append(recording_audio)
+        except Exception as e:
+            console.print(f"[red]Error in audio callback: {e}[/]")
+            console.print(f"[yellow]Debug info:[/]")
+            console.print(f"- Input shape: {indata.shape}")
+            console.print(f"- Input dtype: {indata.dtype}")
+            stop_event.set()
 
 def on_message(ws, message):
     """Handle incoming WebSocket messages."""
@@ -222,18 +254,53 @@ def save_audio_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
     filename = output_dir / f"recorded_audio_{timestamp}.wav"
     
     try:
+        # Get channel count from the first frame
+        if recorded_frames:
+            first_frame = np.frombuffer(recorded_frames[0], dtype=DTYPE)
+            # Calculate number of channels based on frame size and samples per frame
+            samples_per_frame = FRAMES_PER_BUFFER
+            num_channels = first_frame.size // samples_per_frame
+            if num_channels == 0:  # Fallback if calculation fails
+                num_channels = CHANNELS
+        else:
+            num_channels = CHANNELS
+            
+        console.print(f"[green]Saving {num_channels} channel audio...[/]")
+        
+        # Combine all frames into a single array
+        all_frames = b''.join(recorded_frames)
+        audio_data = np.frombuffer(all_frames, dtype=DTYPE)
+        
+        # Calculate total number of samples per channel
+        total_samples = len(audio_data) // num_channels
+        if total_samples * num_channels != len(audio_data):
+            console.print(f"[yellow]Warning: Audio data length ({len(audio_data)}) is not divisible by number of channels ({num_channels})[/]")
+            # Truncate to nearest complete frame
+            total_samples = len(audio_data) // num_channels
+            audio_data = audio_data[:total_samples * num_channels]
+        
+        # Reshape the data to ensure proper channel layout
+        audio_data = audio_data.reshape(total_samples, num_channels)
+        
         with wave.open(str(filename), 'wb') as wf:
-            wf.setnchannels(CHANNELS)
+            wf.setnchannels(num_channels)
             wf.setsampwidth(2)  # 16-bit = 2 bytes
             wf.setframerate(SAMPLE_RATE)
-            wf.writeframes(b''.join(recorded_frames))
+            wf.writeframes(audio_data.tobytes())
         
         console.print(f"Audio saved to: {filename}")
-        console.print(f"Duration: {len(recorded_frames) * FRAMES_PER_BUFFER / SAMPLE_RATE:.2f} seconds")
+        console.print(f"Duration: {total_samples / SAMPLE_RATE:.2f} seconds")
         return filename
         
     except Exception as e:
-        console.print(f"Error saving WAV file: {e}")
+        console.print(f"[red]Error saving WAV file: {e}[/]")
+        console.print(f"[yellow]Debug info:[/]")
+        console.print(f"- Number of frames: {len(recorded_frames)}")
+        if recorded_frames:
+            console.print(f"- First frame size: {len(recorded_frames[0])} bytes")
+            console.print(f"- Calculated channels: {num_channels}")
+            console.print(f"- Total samples: {len(audio_data) if 'audio_data' in locals() else 'N/A'}")
+            console.print(f"- Samples per channel: {total_samples if 'total_samples' in locals() else 'N/A'}")
         return None
 
 def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] = None, show_partials_flag: bool = False) -> None:
