@@ -19,9 +19,16 @@ from typing import Optional, List, Dict, Any
 import wave
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import pyfiglet  # type: ignore
 
 # Load environment variables
 load_dotenv()
+
+# Create console and show banner
+console = Console()
+banner = pyfiglet.figlet_format("opennotes", font="slant")
+console.print(f"[bold blue]{banner}[/]")
+console.print("[bold green]Real-time Audio Transcription Tool[/]\n")
 
 # AssemblyAI API configuration
 API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
@@ -51,7 +58,7 @@ audio_thread = None
 recorded_frames: List[bytes] = []  # Store audio frames for WAV file
 current_device_id: Optional[int] = None  # Store the current device ID
 current_streaming_file: Optional[Path] = None  # Store the current streaming file path
-show_partials: bool = False  # Control whether to show partial transcriptions
+show_partials: bool = True  # Control whether to show partial transcriptions
 
 def get_input_device_id(device_name: str) -> Optional[int]:
     """Get the device ID for a given device name."""
@@ -126,9 +133,11 @@ def on_message(ws, message):
             session_id = data.get('id')
             expires_at = data.get('expires_at')
             console.print(Panel(
-                f"Session began: ID={session_id}\nExpiresAt={datetime.fromtimestamp(expires_at)}",
-                title="Session Started",
-                border_style="green"
+                f"[bold green]Session began:[/] ID={session_id}\n"
+                f"[bold green]Expires at:[/] {datetime.fromtimestamp(expires_at)}",
+                title="🎙️ Session Started",
+                border_style="green",
+                padding=(1, 2)
             ))
             # Create streaming output file when session begins
             global current_streaming_file
@@ -138,7 +147,11 @@ def on_message(ws, message):
             with open(current_streaming_file, "w") as f:
                 f.write(f"Session ID: {session_id}\n")
                 f.write(f"Started at: {datetime.fromtimestamp(expires_at)}\n\n")
-            console.print(f"[green]Streaming output will be saved to: {current_streaming_file}[/]")
+            console.print(Panel(
+                f"[green]Streaming output will be saved to:[/]\n{current_streaming_file}",
+                border_style="blue",
+                padding=(1, 2)
+            ))
         elif msg_type == "Turn":
             transcript = data.get('transcript', '')
             formatted = data.get('turn_is_formatted', False)
@@ -146,29 +159,38 @@ def on_message(ws, message):
             if transcript.strip():  # Only print if we have content
                 # Show text based on format preference
                 if formatted:
+                    # Show final transcription on a new line
                     console.print(f"[bold green]{transcript}[/]")
                     # Always save formatted text to file
                     if current_streaming_file:
                         with open(current_streaming_file, "a") as f:
                             f.write(f"{transcript}\n")
                 elif show_partials:  # Only show partials if enabled
+                    # Show partial on a new line
                     console.print(f"[yellow]{transcript}[/]")
         elif msg_type == "Termination":
             audio_duration = data.get('audio_duration_seconds', 0)
             session_duration = data.get('session_duration_seconds', 0)
             console.print(Panel(
-                f"Audio Duration: {audio_duration}s\nSession Duration: {session_duration}s",
-                title="Session Terminated",
-                border_style="red"
+                f"[bold red]Session Terminated[/]\n\n"
+                f"[green]Audio Duration:[/] {audio_duration:.1f}s\n"
+                f"[green]Session Duration:[/] {session_duration:.1f}s",
+                title="⏹️ Recording Complete",
+                border_style="red",
+                padding=(1, 2)
             ))
             # Add session end info to streaming file
             if current_streaming_file:
                 with open(current_streaming_file, "a") as f:
                     f.write(f"\nSession ended at: {datetime.now()}\n")
-                    f.write(f"Audio Duration: {audio_duration}s\n")
-                    f.write(f"Session Duration: {session_duration}s\n")
+                    f.write(f"Audio Duration: {audio_duration:.1f}s\n")
+                    f.write(f"Session Duration: {session_duration:.1f}s\n")
     except Exception as e:
-        console.print(f"[red]Error handling message: {e}[/]")
+        console.print(Panel(
+            f"[bold red]Error handling message:[/]\n{str(e)}",
+            border_style="red",
+            padding=(1, 2)
+        ))
 
 def on_error(ws, error):
     """Called when a WebSocket error occurs."""
@@ -289,10 +311,6 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
                     transcript = transcribe_file(wav_file)
                     # Save transcript in the same directory as the recording
                     save_transcript(transcript, output_dir)
-                    # Display summary if available
-                    if "summary" in transcript:
-                        console.print("\n[bold blue]Summary:[/]")
-                        console.print(transcript["summary"])
                 except Exception as e:
                     console.print(f"[red]Error during transcription: {e}[/]")
 
@@ -426,6 +444,15 @@ def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
     
     console.print(f"\n[green]Transcript saved to:[/]")
     console.print(f"- Full transcript: {base_path}_full.json")
+    
+    # Display the full transcript
+    if "text" in transcript and transcript["text"]:
+        console.print("\n[bold blue]Full Transcript:[/]")
+        console.print(Panel(
+            transcript["text"],
+            border_style="blue",
+            padding=(1, 2)
+        ))
 
 def prompt_device_selection() -> Optional[str]:
     """Prompt the user to select an input device."""
@@ -470,14 +497,7 @@ def record(
             console.print("[red]No device selected. Exiting.[/]")
             sys.exit(1)
         console.print(f"\n[green]Selected device: {device}[/]")
-        
-        # Prompt for partials preference with 'yes' as default
-        show_partials = typer.confirm("Show partial transcriptions as they come in?", default=True)
-        if show_partials:
-            console.print("[green]Will show partial transcriptions in yellow[/]")
-        else:
-            console.print("[green]Will show only final transcriptions[/]")
-            
+                    
         record_audio(output_dir, device, show_partials)
     except Exception as e:
         console.print(f"[red]Error: {e}[/]")
