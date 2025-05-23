@@ -14,7 +14,6 @@ import sounddevice as sd  # type: ignore
 import numpy as np  # type: ignore
 import websocket  # type: ignore
 from rich.console import Console  # type: ignore
-from rich.panel import Panel  # type: ignore
 from typing import Optional, List, Dict, Any
 import wave
 from requests.adapters import HTTPAdapter  # type: ignore
@@ -160,7 +159,6 @@ def on_message(ws, message):
                 console.print(f"[bold green]Session began:[/] ID={session_id}")
                 console.print(f"[bold green]Expires at:[/] {datetime.fromtimestamp(expires_at)}")
                 console.print(f"[bold green]Streaming output will be saved to:[/] {current_streaming_file}")
-                console.print("\n[bold green]🎙️ Session Started[/]")
                 console.print("[green]Recording started. Press Ctrl+C to stop.[/]")
         elif msg_type == "Turn":
             transcript = data.get('transcript', '')
