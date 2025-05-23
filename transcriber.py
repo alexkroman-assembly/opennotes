@@ -20,6 +20,8 @@ import wave
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import pyfiglet  # type: ignore
+from pydub import AudioSegment  # type: ignore
+import io
 
 # Load environment variables
 load_dotenv()
@@ -211,29 +213,36 @@ def on_close(ws, close_status_code, close_msg):
     if audio_thread and audio_thread.is_alive():
         audio_thread.join(timeout=1.0)
 
-def save_wav_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
-    """Save recorded audio frames to a WAV file."""
+def save_audio_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
+    """Save recorded audio frames to an MP3 file."""
     if not recorded_frames:
         console.print("No audio data recorded.")
         return None
     
     # Generate filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = output_dir / f"recorded_audio_{timestamp}.wav"
+    filename = output_dir / f"recorded_audio_{timestamp}.mp3"
     
     try:
-        with wave.open(str(filename), 'wb') as wf:
+        # First save as temporary WAV file
+        temp_wav = io.BytesIO()
+        with wave.open(temp_wav, 'wb') as wf:
             wf.setnchannels(CHANNELS)
             wf.setsampwidth(2)  # 16-bit = 2 bytes
             wf.setframerate(SAMPLE_RATE)
             wf.writeframes(b''.join(recorded_frames))
+        
+        # Convert WAV to MP3
+        temp_wav.seek(0)
+        audio = AudioSegment.from_wav(temp_wav)
+        audio.export(str(filename), format="mp3", bitrate="192k")
         
         console.print(f"Audio saved to: {filename}")
         console.print(f"Duration: {len(recorded_frames) * FRAMES_PER_BUFFER / SAMPLE_RATE:.2f} seconds")
         return filename
         
     except Exception as e:
-        console.print(f"Error saving WAV file: {e}")
+        console.print(f"Error saving MP3 file: {e}")
         return None
 
 def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] = None, show_partials_flag: bool = False) -> None:
@@ -302,13 +311,13 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
             ws_thread.join(timeout=2.0)
         finally:
             console.print("[yellow]Recording stopped.[/]")
-            # Save the WAV file
-            wav_file = save_wav_file(output_dir, recorded_frames)
-            if wav_file:
+            # Save the MP3 file
+            audio_file = save_audio_file(output_dir, recorded_frames)
+            if audio_file:
                 # Automatically transcribe the saved file
                 console.print("\n[yellow]Starting automatic transcription...[/]")
                 try:
-                    transcript = transcribe_file(wav_file)
+                    transcript = transcribe_file(audio_file)
                     # Save transcript in the same directory as the recording
                     save_transcript(transcript, output_dir)
                 except Exception as e:
@@ -417,6 +426,27 @@ def transcribe_file(file_path: Path, options: Optional[Dict[str, Any]] = None) -
         
         time.sleep(3)
 
+def run_lemur_task(transcript_id: str) -> Dict[str, Any]:
+    """Run a Lemur task on the transcript."""
+    url = "https://api.assemblyai.com/lemur/v3/generate/task"
+    headers = {
+        "Authorization": API_KEY,
+        "Content-Type": "application/json"
+    }
+    data = {
+        "final_model": "anthropic/claude-3-7-sonnet-20250219",
+        "prompt": "summarize this transcript",
+        "max_output_size": 3000,
+        "temperature": 0,
+        "transcript_ids": [transcript_id]
+    }
+    
+    response = requests.post(url, headers=headers, json=data)
+    if response.status_code != 200:
+        raise Exception(f"Lemur task failed: {response.text}")
+    
+    return response.json()
+
 def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
     """Save transcript results to files."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -453,6 +483,27 @@ def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
             border_style="blue",
             padding=(1, 2)
         ))
+        
+        # Run Lemur task and save results
+        try:
+            console.print("\n[yellow]Running Lemur summary task...[/]")
+            lemur_result = run_lemur_task(transcript["id"])
+            
+            # Save Lemur response
+            lemur_path = f"{base_path}_lemur_summary.txt"
+            with open(lemur_path, "w") as f:
+                f.write(lemur_result["response"])
+            console.print(f"- Lemur summary: {lemur_path}")
+            
+            # Display Lemur response
+            console.print("\n[bold blue]Lemur Summary:[/]")
+            console.print(Panel(
+                lemur_result["response"],
+                border_style="green",
+                padding=(1, 2)
+            ))
+        except Exception as e:
+            console.print(f"[red]Error running Lemur task: {e}[/]")
 
 def prompt_device_selection() -> Optional[str]:
     """Prompt the user to select an input device."""
