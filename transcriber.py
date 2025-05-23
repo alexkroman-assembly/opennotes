@@ -15,10 +15,11 @@ import numpy as np  # type: ignore
 import websocket  # type: ignore
 from pydub import AudioSegment  # type: ignore
 from rich.console import Console  # type: ignore
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from requests.adapters import HTTPAdapter  # type: ignore
 from urllib3.util.retry import Retry  # type: ignore
 import pyfiglet  # type: ignore
+from sentence_transformers import SentenceTransformer  # type: ignore
 
 # Load environment variables
 load_dotenv()
@@ -69,15 +70,15 @@ def list_devices() -> None:
     """List all available audio input devices."""
     devices = sd.query_devices()
     
-    console.print("\n[bold blue]Input Devices:[/]")
+    console.print("\nInput Devices:")
     input_devices = [(i, device) for i, device in enumerate(devices) if device['max_input_channels'] > 0]
     
     if not input_devices:
-        console.print("[yellow]No input devices found.[/]")
+        console.print("No input devices found.")
         return
         
     for i, device in input_devices:
-        console.print(f"[green]{i}: {device['name']}[/]")
+        console.print(f"{i}: {device['name']}")
         console.print(f"    Channels: {device['max_input_channels']}")
         console.print(f"    Sample Rate: {device['default_samplerate']} Hz")
         console.print()
@@ -130,12 +131,12 @@ def on_open(ws):
             CONNECTION_PARAMS["sample_rate"] = sample_rate
             API_ENDPOINT = f"{API_ENDPOINT_BASE_URL}?{urlencode(CONNECTION_PARAMS)}"
             
-            console.print(f"[green]Using {channels} channels for device[/]")
-            console.print(f"[green]Device sample rate: {sample_rate} Hz[/]")
-            console.print(f"[green]Frame size: {frames_per_buffer} samples[/]")
+            console.print(f"Using {channels} channels for device")
+            console.print(f"Device sample rate: {sample_rate} Hz")
+            console.print(f"Frame size: {frames_per_buffer} samples")
             
             if channels > 1:
-                console.print("[yellow]Note: Mixing down to mono for streaming, preserving all channels for recording[/]")
+                console.print("Note: Mixing down to mono for streaming, preserving all channels for recording")
             
             with sd.InputStream(
                 samplerate=sample_rate,
@@ -147,8 +148,8 @@ def on_open(ws):
                 while not stop_event.is_set():
                     time.sleep(0.1)
         except Exception as e:
-            console.print(f"[red]Error streaming audio: {e}[/]")
-        console.print("[yellow]Audio streaming stopped.[/]")
+            console.print(f"Error streaming audio: {e}")
+        console.print("Audio streaming stopped.")
 
     global audio_thread
     audio_thread = threading.Thread(target=stream_audio)
@@ -202,10 +203,10 @@ def on_message(ws, message):
             with open(current_streaming_file, "w") as f:
                 f.write(f"Session ID: {session_id}\n")
                 f.write(f"Started at: {datetime.fromtimestamp(expires_at)}\n\n")
-                console.print(f"[bold green]Session began:[/] ID={session_id}")
-                console.print(f"[bold green]Expires at:[/] {datetime.fromtimestamp(expires_at)}")
-                console.print(f"[bold green]Session directory:[/] {current_session_dir}")
-                console.print("[green]Recording started. Press Ctrl+C to stop.[/]")
+                console.print(f"Session began: ID={session_id}")
+                console.print(f"Expires at: {datetime.fromtimestamp(expires_at)}")
+                console.print(f"Session directory: {current_session_dir}")
+                console.print("Recording started. Press Ctrl+C to stop.")
         elif msg_type == "Turn":
             transcript = data.get('transcript', '')
             formatted = data.get('turn_is_formatted', False)
@@ -214,21 +215,21 @@ def on_message(ws, message):
                 # Show text based on format preference
                 if formatted:
                     # Show final transcription on a new line
-                    console.print(f"[bold green]{transcript}[/]")
+                    console.print(transcript)
                     # Always save formatted text to file
                     if current_streaming_file:
                         with open(current_streaming_file, "a") as f:
                             f.write(f"{transcript}\n")
                 elif show_partials:  # Only show partials if enabled
                     # Show partial on a new line
-                    console.print(f"[yellow]{transcript}[/]")
+                    console.print(transcript)
         elif msg_type == "Termination":
             audio_duration = data.get('audio_duration_seconds', 0)
             session_duration = data.get('session_duration_seconds', 0)
-            console.print("[bold red]Session Terminated[/]")
-            console.print(f"[green]Audio Duration:[/] {audio_duration:.1f}s")
-            console.print(f"[green]Session Duration:[/] {session_duration:.1f}s")
-            console.print("\n[bold red]⏹️ Recording Complete[/]")
+            console.print("Session Terminated")
+            console.print(f"Audio Duration: {audio_duration:.1f}s")
+            console.print(f"Session Duration: {session_duration:.1f}s")
+            console.print("\nRecording Complete")
             # Add session end info to streaming file
             if current_streaming_file:
                 with open(current_streaming_file, "a") as f:
@@ -236,16 +237,16 @@ def on_message(ws, message):
                     f.write(f"Audio Duration: {audio_duration:.1f}s\n")
                     f.write(f"Session Duration: {session_duration:.1f}s\n")
     except Exception as e:
-        console.print(f"[bold red]Error handling message:[/] {str(e)}")
+        console.print(f"Error handling message: {str(e)}")
 
 def on_error(ws, error):
     """Called when a WebSocket error occurs."""
-    console.print(f"[red]WebSocket Error: {error}[/]")
+    console.print(f"WebSocket Error: {error}")
     stop_event.set()
 
 def on_close(ws, close_status_code, close_msg):
     """Called when the WebSocket connection is closed."""
-    console.print(f"[yellow]WebSocket Disconnected: Status={close_status_code}, Msg={close_msg}[/]")
+    console.print(f"WebSocket Disconnected: Status={close_status_code}, Msg={close_msg}")
     global stream
     stop_event.set()
 
@@ -294,8 +295,8 @@ def save_audio_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
         return filename
         
     except Exception as e:
-        console.print(f"[red]Error saving WAV file: {e}[/]")
-        console.print("[yellow]Debug info:[/]")
+        console.print(f"Error saving WAV file: {e}")
+        console.print("Debug info:")
         console.print(f"- Number of frames: {len(recorded_frames)}")
         if recorded_frames:
             console.print(f"- First frame size: {len(recorded_frames[0])} bytes")
@@ -303,13 +304,7 @@ def save_audio_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
         return None
 
 def transcribe_file(file_path: Path, options: Optional[Dict[str, Any]] = None, use_slam: bool = False) -> Dict[str, Any]:
-    """Transcribe a file using AssemblyAI.
-    
-    Args:
-        file_path: Path to the audio file
-        options: Optional additional parameters for the API request
-        use_slam: Whether to use the SLAM model (default: False)
-    """
+    """Transcribe a file using AssemblyAI."""
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
     
@@ -343,7 +338,7 @@ def transcribe_file(file_path: Path, options: Optional[Dict[str, Any]] = None, u
     
     # Submit transcription request
     model_type = "SLAM" if use_slam else "Universal"
-    console.print(f"\n[yellow]Submitting {model_type} transcription request...[/]")
+    console.print(f"\nSubmitting {model_type} transcription request...")
     session = create_session()
     response = session.post(transcript_url, json=data, headers=headers)
     
@@ -353,7 +348,7 @@ def transcribe_file(file_path: Path, options: Optional[Dict[str, Any]] = None, u
     transcript_id = response.json()["id"]
     
     # Poll for completion
-    console.print(f"\n[yellow]Waiting for {model_type} transcription to complete...[/]")
+    console.print(f"\nWaiting for {model_type} transcription to complete...")
     while True:
         response = session.get(f"{transcript_url}/{transcript_id}", headers=headers)
         if response.status_code != 200:
@@ -375,31 +370,31 @@ def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
     if "text" in transcript and transcript["text"]:
         with open(f"{base_path}.txt", "w") as f:
             f.write(transcript["text"])
-        console.print(f"[green]✓ Universal transcript text:[/] {base_path}.txt")
+        console.print(f"Universal transcript text: {base_path}.txt")
     else:
-        console.print("[yellow]No text content found in transcript[/]")
+        console.print("No text content found in transcript")
     
     # Display the full transcript
     if "text" in transcript and transcript["text"]:
-        console.print("\n[bold blue]Universal Transcript:[/]")
+        console.print("\nUniversal Transcript:")
         console.print(transcript["text"])
         
         # Run Lemur task and save results
         try:
-            console.print("\n[yellow]Generating Universal Lemur summary...[/]")
+            console.print("\nGenerating Universal Lemur summary...")
             lemur_result = run_lemur_task(transcript["id"])
             
             # Save Lemur response
             lemur_path = output_dir / f"universal-lemur-{current_session_id}.txt"
             with open(lemur_path, "w") as f:
                 f.write(lemur_result["response"])
-            console.print(f"[green]✓ Universal Lemur summary:[/] {lemur_path}")
+            console.print(f"Universal Lemur summary: {lemur_path}")
             
             # Display Lemur response
-            console.print("\n[bold blue]Universal Lemur Summary:[/]")
+            console.print("\nUniversal Lemur Summary:")
             console.print(lemur_result["response"])
         except Exception as e:
-            console.print(f"[red]Error generating Universal Lemur summary: {e}[/]")
+            console.print(f"Error generating Universal Lemur summary: {e}")
 
 def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] = None, show_partials_flag: bool = False) -> None:
     """Record audio using sounddevice and stream to AssemblyAI."""
@@ -497,28 +492,34 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
                         if "text" in slam_transcript and slam_transcript["text"]:
                             with open(f"{slam_base_path}_text.txt", "w") as f:
                                 f.write(slam_transcript["text"])
-                            console.print(f"[green]✓ SLAM transcript text:[/] {slam_base_path}_text.txt")
+                            console.print(f"SLAM transcript text: {slam_base_path}_text.txt")
                             
                             # Display SLAM transcript
-                            console.print("\n[bold blue]SLAM Transcript:[/]")
+                            console.print("\nSLAM Transcript:")
                             console.print(slam_transcript["text"])
                             
                             # Run Lemur task on SLAM transcript
                             try:
-                                console.print("\n[yellow]Generating SLAM Lemur summary...[/]")
+                                console.print("\nGenerating SLAM Lemur summary...")
                                 slam_lemur_result = run_lemur_task(slam_transcript["id"])
                                 
                                 # Save SLAM Lemur response
                                 slam_lemur_path = current_session_dir / f"slam-lemur-{current_session_id}.txt"
                                 with open(slam_lemur_path, "w") as f:
                                     f.write(slam_lemur_result["response"])
-                                console.print(f"[green]✓ SLAM Lemur summary:[/] {slam_lemur_path}")
+                                console.print(f"SLAM Lemur summary: {slam_lemur_path}")
                                 
                                 # Display SLAM Lemur response
-                                console.print("\n[bold blue]SLAM Lemur Summary:[/]")
+                                console.print("\nSLAM Lemur Summary:")
                                 console.print(slam_lemur_result["response"])
+
+                                # Generate and save embeddings
+                                console.print("\nGenerating embeddings for SLAM transcript...")
+                                embeddings = generate_embeddings(slam_transcript["id"])
+                                save_embeddings(embeddings, current_session_dir, current_session_id)
+                                
                             except Exception as e:
-                                console.print(f"[red]Error generating SLAM Lemur summary: {e}[/]")
+                                console.print(f"Error generating SLAM Lemur summary: {e}")
                             
                     except Exception as e:
                         console.print(f"[red]Error during transcription: {e}[/]")
@@ -543,7 +544,7 @@ def create_session() -> requests.Session:
 
 def upload_file(file_path: Path) -> str:
     """Upload a file to AssemblyAI and return the upload URL."""
-    console.print(f"\n[yellow]Uploading file: {file_path}[/]")
+    console.print(f"\nUploading file: {file_path}")
     
     upload_url = "https://api.assemblyai.com/v2/upload"
     headers = {"authorization": API_KEY}
@@ -560,13 +561,13 @@ def upload_file(file_path: Path) -> str:
             if response.status_code == 200:
                 return response.json()["upload_url"]
             else:
-                console.print(f"[red]Upload failed (attempt {attempt + 1}/{max_retries}): {response.status_code} - {response.text}[/]")
+                console.print(f"Upload failed (attempt {attempt + 1}/{max_retries}): {response.status_code} - {response.text}")
                 
         except requests.exceptions.RequestException as e:
-            console.print(f"[red]Upload error (attempt {attempt + 1}/{max_retries}): {str(e)}[/]")
+            console.print(f"Upload error (attempt {attempt + 1}/{max_retries}): {str(e)}")
             
         if attempt < max_retries - 1:
-            console.print(f"[yellow]Retrying in {retry_delay} seconds...[/]")
+            console.print(f"Retrying in {retry_delay} seconds...")
             time.sleep(retry_delay)
             retry_delay *= 2  # Exponential backoff
     
@@ -593,18 +594,68 @@ def run_lemur_task(transcript_id: str) -> Dict[str, Any]:
     
     return response.json()
 
+def generate_embeddings(transcript_id: str) -> Dict[str, Any]:
+    """Generate embeddings for a transcript using a local model."""
+    try:
+        # Load the local model (using all-MiniLM-L6-v2 which is a good balance of speed and quality)
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # Get the Lemur summary from the file
+        if current_session_dir is None:
+            raise ValueError("No active session directory found")
+            
+        summary_path = current_session_dir / f"slam-lemur-{current_session_id}.txt"
+        if not summary_path.exists():
+            raise FileNotFoundError(f"Lemur summary file not found: {summary_path}")
+            
+        with open(summary_path, 'r') as f:
+            text = f.read()
+            
+        # Split text into chunks (sentences or paragraphs) to handle long texts
+        # Simple sentence splitting - you might want to use a more sophisticated approach
+        chunks = [chunk.strip() for chunk in text.split('.') if chunk.strip()]
+        
+        # Generate embeddings for each chunk
+        embeddings = model.encode(chunks)
+        
+        # Create a structured response similar to what the API would return
+        result = {
+            "transcript_id": transcript_id,
+            "model": "all-MiniLM-L6-v2",
+            "embeddings": embeddings.tolist(),
+            "chunks": chunks,
+            "metadata": {
+                "embedding_dimension": embeddings.shape[1],
+                "num_chunks": len(chunks),
+                "generated_at": datetime.now().isoformat(),
+                "source": "slam-lemur-summary"
+            }
+        }
+        
+        return result
+        
+    except Exception as e:
+        raise Exception(f"Local embedding generation failed: {str(e)}")
+
+def save_embeddings(embeddings: Dict[str, Any], output_dir: Path, session_id: str) -> None:
+    """Save embeddings to a JSON file."""
+    embeddings_path = output_dir / f"embeddings-{session_id}.json"
+    with open(embeddings_path, "w") as f:
+        json.dump(embeddings, f, indent=2)
+    console.print(f"Embeddings saved: {embeddings_path}")
+
 def prompt_device_selection() -> Optional[str]:
     """Prompt the user to select an input device."""
     devices = sd.query_devices()
     input_devices = [(i, device) for i, device in enumerate(devices) if device['max_input_channels'] > 0]
     
     if not input_devices:
-        console.print("[red]No input devices found.[/]")
+        console.print("No input devices found.")
         return None
     
-    console.print("\n[bold blue]Available Input Devices:[/]")
+    console.print("\nAvailable Input Devices:")
     for idx, (i, device) in enumerate(input_devices, 1):
-        console.print(f"[green]{idx}. {device['name']}[/]")
+        console.print(f"{idx}. {device['name']}")
         console.print(f"    Channels: {device['max_input_channels']}")
         console.print(f"    Sample Rate: {device['default_samplerate']} Hz")
         console.print()
@@ -614,9 +665,63 @@ def prompt_device_selection() -> Optional[str]:
             choice = typer.prompt("Select a device number", type=int, default=1)
             if 1 <= choice <= len(input_devices):
                 return input_devices[choice - 1][1]['name']  # Return the device name
-            console.print(f"[red]Please enter a number between 1 and {len(input_devices)}[/]")
+            console.print(f"Please enter a number between 1 and {len(input_devices)}")
         except ValueError:
-            console.print("[red]Please enter a valid number[/]")
+            console.print("Please enter a valid number")
+
+def load_embeddings(recordings_dir: Path) -> List[Tuple[Path, Dict[str, Any]]]:
+    """Load all embedding files from the recordings directory."""
+    embeddings = []
+    for session_dir in recordings_dir.iterdir():
+        if not session_dir.is_dir():
+            continue
+            
+        # Look for embedding files in the session directory
+        for file in session_dir.glob("embeddings-*.json"):
+            try:
+                with open(file, 'r') as f:
+                    data = json.load(f)
+                embeddings.append((file, data))
+            except Exception as e:
+                console.print(f"Error loading embeddings from {file}: {e}")
+    
+    return embeddings
+
+def search_embeddings(query: str, embeddings: List[Tuple[Path, Dict[str, Any]]], model: SentenceTransformer, top_k: int = 5) -> List[Tuple[float, str, Path]]:
+    """Search through embeddings using semantic similarity."""
+    # Generate query embedding
+    query_embedding = model.encode(query)
+    
+    results = []
+    for file_path, data in embeddings:
+        # Get embeddings and chunks from the file
+        doc_embeddings = np.array(data['embeddings'])
+        chunks = data['chunks']
+        
+        # Calculate cosine similarity
+        similarities = np.dot(doc_embeddings, query_embedding) / (
+            np.linalg.norm(doc_embeddings, axis=1) * np.linalg.norm(query_embedding)
+        )
+        
+        # Get top matches for this document
+        top_indices = np.argsort(similarities)[-top_k:][::-1]
+        
+        # Convert embeddings file path to SLAM Lemur summary path
+        session_dir = file_path.parent
+        # Get the full session ID from the embeddings filename
+        session_id = '-'.join(file_path.stem.split('-')[1:])  # Join all parts after 'embeddings-'
+        summary_path = session_dir / f"slam-lemur-{session_id}.txt"
+        
+        for idx in top_indices:
+            results.append((
+                float(similarities[idx]),
+                chunks[idx],
+                summary_path
+            ))
+    
+    # Sort all results by similarity
+    results.sort(key=lambda x: x[0], reverse=True)
+    return results[:top_k]
 
 app = typer.Typer(help="Audio recording and transcription tool.")
 
@@ -633,12 +738,12 @@ def record(
         # Prompt for device selection
         device = prompt_device_selection()
         if device is None:
-            console.print("[red]No device selected. Exiting.[/]")
+            console.print("No device selected. Exiting.")
             sys.exit(1)
                     
         record_audio(output_dir, device, show_partials)
     except Exception as e:
-        console.print(f"[red]Error: {e}[/]")
+        console.print(f"Error: {e}")
         sys.exit(1)
 
 @app.command()
@@ -662,11 +767,11 @@ def transcribe(
         
         # Display summary if available
         if "summary" in transcript:
-            console.print("\n[bold blue]Summary:[/]")
+            console.print("\nSummary:")
             console.print(transcript["summary"])
         
     except Exception as e:
-        console.print(f"[red]Error: {e}[/]")
+        console.print(f"Error: {e}")
         sys.exit(1)
 
 @app.command()
@@ -675,7 +780,80 @@ def devices() -> None:
     try:
         list_devices()
     except Exception as e:
-        console.print(f"[red]Error: {e}[/]")
+        console.print(f"Error: {e}")
+        sys.exit(1)
+
+@app.command()
+def search(
+    recordings_dir: Path = typer.Option(
+        "recordings",
+        "--recordings-dir", "-r",
+        help="Directory containing recordings and embeddings"
+    ),
+    top_k: int = typer.Option(
+        5,
+        "--top-k", "-k",
+        help="Number of top results to return"
+    )
+) -> None:
+    """Interactive search through all embeddings in the recordings directory."""
+    try:
+        # Load the embedding model
+        console.print("Loading embedding model...")
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # Load all embeddings
+        console.print(f"Loading embeddings from {recordings_dir}...")
+        embeddings = load_embeddings(recordings_dir)
+        
+        if not embeddings:
+            console.print("No embeddings found in the recordings directory.")
+            return
+            
+        console.print(f"Found {len(embeddings)} embedding files.")
+        console.print("\nInteractive search mode. Type 'exit' or 'quit' to end the session.")
+        console.print("Type 'help' for available commands.")
+        
+        while True:
+            # Get search query from user
+            query = typer.prompt("\nEnter search query")
+            
+            # Check for exit commands
+            if query.lower() in ['exit', 'quit']:
+                console.print("Exiting search session.")
+                break
+                
+            # Check for help command
+            if query.lower() == 'help':
+                console.print("\nAvailable commands:")
+                console.print("  exit, quit - End the search session")
+                console.print("  help - Show this help message")
+                console.print("  clear - Clear the screen")
+                console.print("\nOr enter any text to search through your recordings.")
+                continue
+                
+            # Check for clear command
+            if query.lower() == 'clear':
+                os.system('cls' if os.name == 'nt' else 'clear')
+                continue
+            
+            # Perform search
+            console.print(f"\nSearching for: {query}")
+            results = search_embeddings(query, embeddings, model, top_k)
+            
+            if not results:
+                console.print("No results found.")
+                continue
+                
+            # Display results
+            console.print("\nTop matches:")
+            for i, (score, text, file_path) in enumerate(results, 1):
+                console.print(f"\n{i}. Similarity: {score:.3f}")
+                console.print(f"   Summary: {file_path}")
+                console.print(f"   Text: {text}")
+            
+    except Exception as e:
+        console.print(f"Error during search: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
