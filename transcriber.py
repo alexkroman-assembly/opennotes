@@ -4,16 +4,21 @@ import sys
 import json
 import threading
 import time
-import requests  # type: ignore
+import requests
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
 from urllib.parse import urlencode
-import click  # type: ignore
+import typer  # type: ignore
 from dotenv import load_dotenv  # type: ignore
-import pyaudio  # type: ignore
+import sounddevice as sd  # type: ignore
+import numpy as np  # type: ignore
 import websocket  # type: ignore
-import subprocess
+from rich.console import Console  # type: ignore
+from rich.panel import Panel  # type: ignore
+from typing import Optional, List, Dict, Any
+import wave
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Load environment variables
 load_dotenv()
@@ -23,66 +28,64 @@ API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
 if not API_KEY:
     raise ValueError("Missing AssemblyAI API key. Set ASSEMBLYAI_API_KEY in .env")
 
-HEADERS = {
-    "authorization": API_KEY,
-    "content-type": "application/json"
-}
+# Audio Configuration
+FRAMES_PER_BUFFER = 800  # 50ms of audio (0.05s * 16000Hz)
+SAMPLE_RATE = 16000
+CHANNELS = 2
+DTYPE = np.int16
 
 # Streaming API Configuration
 CONNECTION_PARAMS = {
-    "sample_rate": 16000,
+    "sample_rate": SAMPLE_RATE,
     "formatted_finals": True,
 }
 API_ENDPOINT_BASE_URL = "wss://streaming.assemblyai.com/v3/ws"
 API_ENDPOINT = f"{API_ENDPOINT_BASE_URL}?{urlencode(CONNECTION_PARAMS)}"
 
-# Audio Configuration
-FRAMES_PER_BUFFER = 800  # 50ms of audio (0.05s * 16000Hz)
-SAMPLE_RATE = CONNECTION_PARAMS["sample_rate"]
-CHANNELS = 1
-FORMAT = pyaudio.paInt16
-
-# Global variables for audio stream and websocket
-audio = None
+# Global variables
+console = Console()
+stop_event = threading.Event()
 stream = None
 ws_app = None
 audio_thread = None
-stop_event = threading.Event()
-
-FFMPEG_CMD = [
-    "ffmpeg",
-    "-f", "avfoundation",
-    "-i", ":Meeting Recorder",
-    "-ar", "16000",
-    "-ac", "1",
-    "-f", "s16le",
-    "-"
-]
+recorded_frames: List[bytes] = []  # Store audio frames for WAV file
 
 def on_open(ws):
     """Called when the WebSocket connection is established."""
-    print("WebSocket connection opened.")
-    print(f"Connected to: {API_ENDPOINT}")
+    console.print("[green]WebSocket connection opened.[/]")
+    console.print(f"Connected to: {API_ENDPOINT}")
 
-    def stream_ffmpeg_audio(ws):
-        process = subprocess.Popen(FFMPEG_CMD, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    def stream_audio():
+        global stream
+        console.print("[yellow]Starting audio streaming...[/]")
         try:
-            print("Starting ffmpeg audio streaming...")
-            while not stop_event.is_set():
-                data = process.stdout.read(3200)  # 100ms of audio at 16kHz, 16-bit mono
-                if not data:
-                    break
-                ws.send(data, websocket.ABNF.OPCODE_BINARY)
+            with sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype=DTYPE,
+                callback=audio_callback
+            ):
+                while not stop_event.is_set():
+                    time.sleep(0.1)
         except Exception as e:
-            print(f"Error streaming audio: {e}")
-        finally:
-            process.terminate()
-            print("ffmpeg audio streaming stopped.")
+            console.print(f"[red]Error streaming audio: {e}[/]")
+        console.print("[yellow]Audio streaming stopped.[/]")
 
     global audio_thread
-    audio_thread = threading.Thread(target=stream_ffmpeg_audio, args=(ws,))
+    audio_thread = threading.Thread(target=stream_audio)
     audio_thread.daemon = True
     audio_thread.start()
+
+def audio_callback(indata, frames, time, status):
+    """Callback for audio stream."""
+    if status:
+        console.print(f"[yellow]Audio callback status: {status}[/]")
+    if not stop_event.is_set() and ws_app and ws_app.sock and ws_app.sock.connected:
+        # Convert to bytes and send
+        audio_data = indata.tobytes()
+        ws_app.send(audio_data, websocket.ABNF.OPCODE_BINARY)
+        # Store audio data for WAV recording
+        recorded_frames.append(audio_data)
 
 def on_message(ws, message):
     """Handle incoming WebSocket messages."""
@@ -93,43 +96,40 @@ def on_message(ws, message):
         if msg_type == "Begin":
             session_id = data.get('id')
             expires_at = data.get('expires_at')
-            print(f"\nSession began: ID={session_id}, ExpiresAt={datetime.fromtimestamp(expires_at)}")
+            console.print(Panel(
+                f"Session began: ID={session_id}\nExpiresAt={datetime.fromtimestamp(expires_at)}",
+                title="Session Started",
+                border_style="green"
+            ))
         elif msg_type == "Turn":
             transcript = data.get('transcript', '')
             formatted = data.get('turn_is_formatted', False)
-            speaker = data.get('speaker', 'A')
 
-            # Only print if we have actual new content
-            if transcript.strip():
+            if transcript.strip():  # Only print if we have content
                 if formatted:
-                    # For formatted messages, print on a new line
-                    print(f"\nSpeaker {speaker}: {transcript}")
+                    console.print(f"\n[green]{transcript}[/]")
                 else:
-                    # For partial updates, use carriage return to update the same line
-                    print(f"\rSpeaker {speaker}: {transcript}", end='', flush=True)
+                    print(f"\r{transcript}", end='', flush=True)
         elif msg_type == "Termination":
             audio_duration = data.get('audio_duration_seconds', 0)
             session_duration = data.get('session_duration_seconds', 0)
-            print(f"\nSession Terminated: Audio Duration={audio_duration}s, Session Duration={session_duration}s")
-        else:
-            print(f"\nReceived message type: {msg_type}")
-            print(f"Message data: {data}")
-    except json.JSONDecodeError as e:
-        print(f"Error decoding message: {e}")
-        print(f"Raw message: {message}")
+            console.print(Panel(
+                f"Audio Duration: {audio_duration}s\nSession Duration: {session_duration}s",
+                title="Session Terminated",
+                border_style="red"
+            ))
     except Exception as e:
-        print(f"Error handling message: {e}")
-        print(f"Raw message: {message}")
+        console.print(f"[red]Error handling message: {e}[/]")
 
 def on_error(ws, error):
     """Called when a WebSocket error occurs."""
-    print(f"\nWebSocket Error: {error}")
+    console.print(f"[red]WebSocket Error: {error}[/]")
     stop_event.set()
 
 def on_close(ws, close_status_code, close_msg):
     """Called when the WebSocket connection is closed."""
-    print(f"\nWebSocket Disconnected: Status={close_status_code}, Msg={close_msg}")
-    global stream, audio
+    console.print(f"[yellow]WebSocket Disconnected: Status={close_status_code}, Msg={close_msg}[/]")
+    global stream
     stop_event.set()
 
     if stream:
@@ -137,278 +137,277 @@ def on_close(ws, close_status_code, close_msg):
             stream.stop_stream()
         stream.close()
         stream = None
-    if audio:
-        audio.terminate()
-        audio = None
     if audio_thread and audio_thread.is_alive():
         audio_thread.join(timeout=1.0)
 
-def record_audio(output_dir: Path) -> None:
-    """Record audio using ffmpeg, save to file, and stream to AssemblyAI."""
-    output_dir.mkdir(parents=True, exist_ok=True)
+def save_wav_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
+    """Save recorded audio frames to a WAV file."""
+    if not recorded_frames:
+        console.print("No audio data recorded.")
+        return None
     
-    # Create a temporary WAV file for the recording
+    # Generate filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    temp_audio_file = output_dir / f"recording_{timestamp}.wav"
+    filename = output_dir / f"recorded_audio_{timestamp}.wav"
     
-    # Modified ffmpeg command to save to file while streaming
-    FFMPEG_CMD_SAVE = [
-        "ffmpeg",
-        "-f", "avfoundation",
-        "-i", ":Meeting Recorder",
-        "-ar", "16000",
-        "-ac", "1",
-        "-f", "s16le",
-        "-"
-    ]
-    
-    FFMPEG_CMD_FILE = [
-        "ffmpeg",
-        "-f", "avfoundation",
-        "-i", ":Meeting Recorder",
-        "-ar", "16000",
-        "-ac", "1",
-        "-f", "wav",
-        str(temp_audio_file)
-    ]
-    
-    global ws_app
-
-    def stream_ffmpeg_audio(ws):
-        process = subprocess.Popen(FFMPEG_CMD_SAVE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        try:
-            print("Starting ffmpeg audio streaming...")
-            while not stop_event.is_set():
-                data = process.stdout.read(3200)  # 100ms of audio at 16kHz, 16-bit mono
-                if not data:
-                    break
-                ws.send(data, websocket.ABNF.OPCODE_BINARY)
-        except Exception as e:
-            print(f"Error streaming audio: {e}")
-        finally:
-            process.terminate()
-            print("ffmpeg audio streaming stopped.")
-
-    def on_open(ws):
-        print("WebSocket connection opened.")
-        print(f"Connected to: {API_ENDPOINT}")
-        global audio_thread
-        audio_thread = threading.Thread(target=stream_ffmpeg_audio, args=(ws,))
-        audio_thread.daemon = True
-        audio_thread.start()
-
-    # Start the file recording process
-    file_process = subprocess.Popen(FFMPEG_CMD_FILE, stderr=subprocess.DEVNULL)
-    print("Started recording to", temp_audio_file)
-
-    ws_app = websocket.WebSocketApp(
-        API_ENDPOINT,
-        header={"Authorization": API_KEY},
-        on_open=on_open,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close,
-    )
-
-    ws_thread = threading.Thread(target=ws_app.run_forever)
-    ws_thread.daemon = True
-    ws_thread.start()
-
     try:
-        while ws_thread.is_alive():
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        print("\nCtrl+C received. Stopping...")
-        stop_event.set()
-        if ws_app and ws_app.sock and ws_app.sock.connected:
-            try:
-                terminate_message = {"type": "Terminate"}
-                print(f"Sending termination message: {json.dumps(terminate_message)}")
-                ws_app.send(json.dumps(terminate_message))
-                time.sleep(5)
-            except Exception as e:
-                print(f"Error sending termination message: {e}")
-        if ws_app:
-            ws_app.close()
-        ws_thread.join(timeout=2.0)
+        with wave.open(str(filename), 'wb') as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(2)  # 16-bit = 2 bytes
+            wf.setframerate(SAMPLE_RATE)
+            wf.writeframes(b''.join(recorded_frames))
+        
+        console.print(f"Audio saved to: {filename}")
+        console.print(f"Duration: {len(recorded_frames) * FRAMES_PER_BUFFER / SAMPLE_RATE:.2f} seconds")
+        return filename
+        
     except Exception as e:
-        print(f"\nAn unexpected error occurred: {e}")
-        stop_event.set()
-        if ws_app:
-            ws_app.close()
-        ws_thread.join(timeout=2.0)
-    finally:
-        # Stop the file recording process
-        file_process.terminate()
-        file_process.wait()
-        print("Recording stopped.")
-        
-        # Process the recorded file through transcription
-        if temp_audio_file.exists():
-            print("\nProcessing recorded file through transcription pipeline...")
-            transcribe_file(temp_audio_file, output_dir)
-            
-            # Clean up the temporary file
-            try:
-                temp_audio_file.unlink()
-                print("Cleaned up temporary recording file.")
-            except Exception as e:
-                print(f"Warning: Could not delete temporary file: {e}")
-        
-        print("Cleanup complete. Exiting.")
+        console.print(f"Error saving WAV file: {e}")
+        return None
 
-def get_output_paths(base_path: Path, output_dir: Path) -> Tuple[Path, Path]:
-    """Get paths for transcript and summary files."""
+def record_audio(output_dir: Optional[Path] = None) -> None:
+    """Record audio using sounddevice and stream to AssemblyAI."""
+    # Ensure output_dir is set to 'recordings' if not provided
+    if output_dir is None:
+        output_dir = Path("recordings")
     output_dir.mkdir(parents=True, exist_ok=True)
-    return (
-        output_dir / f"{base_path.stem}.txt",
-        output_dir / f"{base_path.stem}_summary.txt"
+    
+    global stream, ws_app, recorded_frames
+    stop_event.clear()
+    recorded_frames = []  # Reset recorded frames
+    
+    try:
+        # Initialize WebSocket connection
+        console.print("\n[yellow]Initializing WebSocket connection...[/]")
+        ws_app = websocket.WebSocketApp(
+            API_ENDPOINT,
+            header={"Authorization": API_KEY},
+            on_open=on_open,
+            on_message=on_message,
+            on_error=on_error,
+            on_close=on_close,
+        )
+
+        # Start WebSocket connection in a separate thread
+        ws_thread = threading.Thread(target=ws_app.run_forever)
+        ws_thread.daemon = True
+        ws_thread.start()
+
+        try:
+            console.print("\n[green]Recording started. Press Ctrl+C to stop.[/]")
+            while ws_thread.is_alive():
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Ctrl+C received. Stopping...[/]")
+            stop_event.set()
+            if ws_app and ws_app.sock and ws_app.sock.connected:
+                try:
+                    ws_app.send(json.dumps({"type": "Terminate"}))
+                    time.sleep(5)
+                except Exception as e:
+                    console.print(f"[red]Error sending termination message: {e}[/]")
+            if ws_app:
+                ws_app.close()
+            ws_thread.join(timeout=2.0)
+        except Exception as e:
+            console.print(f"\n[red]An unexpected error occurred: {e}[/]")
+            stop_event.set()
+            if ws_app:
+                ws_app.close()
+            ws_thread.join(timeout=2.0)
+        finally:
+            console.print("[yellow]Recording stopped.[/]")
+            # Save the WAV file
+            wav_file = save_wav_file(output_dir, recorded_frames)
+            if wav_file:
+                # Automatically transcribe the saved file
+                console.print("\n[yellow]Starting automatic transcription...[/]")
+                try:
+                    transcript = transcribe_file(wav_file)
+                    # Save transcript in the same directory as the recording
+                    save_transcript(transcript, output_dir)
+                    # Display summary if available
+                    if "summary" in transcript:
+                        console.print("\n[bold blue]Summary:[/]")
+                        console.print(transcript["summary"])
+                except Exception as e:
+                    console.print(f"[red]Error during transcription: {e}[/]")
+
+    except Exception as e:
+        console.print(f"\n[red]An unexpected error occurred: {e}[/]")
+    finally:
+        stop_event.set()
+
+def create_session() -> requests.Session:
+    """Create a requests session with retry logic."""
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=3,  # number of retries
+        backoff_factor=1,  # wait 1, 2, 4 seconds between retries
+        status_forcelist=[500, 502, 503, 504]  # HTTP status codes to retry on
     )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 def upload_file(file_path: Path) -> str:
-    """Upload a file to AssemblyAI and return the URL."""
-    upload_url = "https://api.assemblyai.com/v2/upload"
+    """Upload a file to AssemblyAI and return the upload URL."""
+    console.print(f"\n[yellow]Uploading file: {file_path}[/]")
     
-    with open(file_path, "rb") as f:
-        response = requests.post(
-            upload_url,
-            headers={"authorization": API_KEY},
-            data=f
-        )
+    upload_url = "https://api.assemblyai.com/v2/upload"
+    headers = {"authorization": API_KEY}
+    
+    session = create_session()
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            with open(file_path, "rb") as f:
+                response = session.post(upload_url, headers=headers, data=f, timeout=30)
+            
+            if response.status_code == 200:
+                return response.json()["upload_url"]
+            else:
+                console.print(f"[red]Upload failed (attempt {attempt + 1}/{max_retries}): {response.status_code} - {response.text}[/]")
+                
+        except requests.exceptions.RequestException as e:
+            console.print(f"[red]Upload error (attempt {attempt + 1}/{max_retries}): {str(e)}[/]")
+            
+        if attempt < max_retries - 1:
+            console.print(f"[yellow]Retrying in {retry_delay} seconds...[/]")
+            time.sleep(retry_delay)
+            retry_delay *= 2  # Exponential backoff
+    
+    raise Exception("Failed to upload file after multiple attempts")
+
+def transcribe_file(file_path: Path, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Transcribe a file using AssemblyAI."""
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+    
+    # Upload the file
+    upload_url = upload_file(file_path)
+    
+    # Prepare transcription request
+    transcript_url = "https://api.assemblyai.com/v2/transcript"
+    headers = {
+        "authorization": API_KEY,
+        "content-type": "application/json"
+    }
+    
+    data = {
+        "audio_url": upload_url,
+        "punctuate": True,
+        "format_text": True,
+        "speaker_labels": True,
+        "auto_highlights": True,
+        "summarization": True,
+        "summary_model": "informative",
+        "summary_type": "bullets"
+    }
+    
+    if options:
+        data.update(options)
+    
+    # Submit transcription request
+    console.print("\n[yellow]Submitting transcription request...[/]")
+    session = create_session()
+    response = session.post(transcript_url, json=data, headers=headers)
     
     if response.status_code != 200:
-        raise Exception(f"Upload failed with status {response.status_code}: {response.text}")
+        raise Exception(f"Transcription request failed with status {response.status_code}: {response.text}")
     
-    return response.json()["upload_url"]
-
-def transcribe_file(file_path: Path, output_dir: Path) -> None:
-    """Transcribe a single audio file using AssemblyAI."""
-    if not file_path.exists():
-        print(f"File {file_path} does not exist.")
-        return
-
-    transcript_file, summary_file = get_output_paths(file_path, output_dir)
-    if transcript_file.exists() and summary_file.exists():
-        print(f"Skipping {file_path}, transcription files already exist.")
-        return
-
-    try:
-        print(f"Transcribing {file_path} with AssemblyAI...")
-
-        # Upload the file
-        audio_url = upload_file(file_path)
-        
-        # Submit transcription request
-        transcript_url = "https://api.assemblyai.com/v2/transcript"
-        transcript_request = {
-            "audio_url": audio_url,
-            "speaker_labels": True,
-            "summarization": True,
-            "summary_model": "conversational",
-            "summary_type": "bullets_verbose"
-        }
-        
-        response = requests.post(transcript_url, json=transcript_request, headers=HEADERS)
+    transcript_id = response.json()["id"]
+    
+    # Poll for completion
+    console.print("\n[yellow]Waiting for transcription to complete...[/]")
+    while True:
+        response = session.get(f"{transcript_url}/{transcript_id}", headers=headers)
         if response.status_code != 200:
-            raise Exception(f"Transcription request failed with status {response.status_code}: {response.text}")
+            raise Exception(f"Failed to get transcript status: {response.text}")
         
-        transcript_id = response.json()["id"]
+        status = response.json()["status"]
+        if status == "completed":
+            return response.json()
+        elif status == "error":
+            raise Exception(f"Transcription failed: {response.json().get('error')}")
         
-        # Poll for completion
-        while True:
-            response = requests.get(f"{transcript_url}/{transcript_id}", headers=HEADERS)
-            if response.status_code != 200:
-                raise Exception(f"Failed to get transcript status: {response.text}")
-            
-            status = response.json()["status"]
-            if status == "completed":
-                break
-            elif status == "error":
-                raise Exception(f"Transcription failed: {response.json().get('error')}")
-            
-            print("Transcription in progress...")
-            time.sleep(3)
-        
-        # Get the completed transcript
-        transcript_data = response.json()
-        
-        if not transcript_data.get("utterances"):
-            print(f"Transcription failed or is incomplete for {file_path}")
-            return
+        time.sleep(3)
 
-        # Save transcript
-        transcript_content = "\n".join(
-            f"Speaker {utt['speaker']}: {utt['text']}" 
-            for utt in transcript_data["utterances"]
-        )
-        transcript_file.write_text(transcript_content)
-        print(f"Transcript saved to {transcript_file}")
+def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
+    """Save transcript results to files."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_path = output_dir / f"transcript_{timestamp}"
+    
+    # Save full transcript
+    with open(f"{base_path}_full.json", "w") as f:
+        json.dump(transcript, f, indent=2)
+    
+    # Save text only if available
+    if "text" in transcript and transcript["text"]:
+        with open(f"{base_path}_text.txt", "w") as f:
+            f.write(transcript["text"])
+        console.print(f"- Text only: {base_path}_text.txt")
+    else:
+        console.print("[yellow]No text content found in transcript[/]")
+    
+    # Save summary if available
+    if "summary" in transcript and transcript["summary"]:
+        with open(f"{base_path}_summary.txt", "w") as f:
+            f.write(transcript["summary"])
+        console.print(f"- Summary: {base_path}_summary.txt")
+    else:
+        console.print("[yellow]No summary found in transcript[/]")
+    
+    console.print(f"\n[green]Transcript saved to:[/]")
+    console.print(f"- Full transcript: {base_path}_full.json")
 
-        # Save summary
-        summary = transcript_data.get("summary", "No summary available.")
-        summary_file.write_text(summary)
-        print(f"Summary saved to {summary_file}")
+app = typer.Typer(help="Audio recording and transcription tool.")
 
-    except Exception as e:
-        print(f"Error transcribing {file_path}: {e}")
-
-def transcribe_directory(input_dir: Path, output_dir: Path) -> None:
-    """Transcribe all WAV files in a directory."""
-    if not input_dir.exists():
-        print(f"Directory {input_dir} does not exist.")
-        return
-
-    for wav_file in input_dir.glob("*.wav"):
-        transcribe_file(wav_file, output_dir)
-
-    print("All transcriptions complete.")
-
-@click.group()
-def cli():
-    """Audio recording and transcription tool."""
-    pass
-
-@cli.command()
-@click.option(
-    "--recordings", "-r",
-    default="recordings",
-    help="Directory containing audio recordings"
-)
-@click.option(
-    "--transcriptions", "-t",
-    default="transcriptions",
-    help="Directory to save transcriptions"
-)
-@click.option(
-    "--file", "-f",
-    help="Single audio file to transcribe"
-)
-def transcribe(recordings: str, transcriptions: str, file: Optional[str]):
-    """Transcribe audio files using AssemblyAI."""
+@app.command()
+def record(
+    output_dir: Path = typer.Option(
+        "recordings",
+        "--output-dir", "-o",
+        help="Directory to save recordings"
+    )
+) -> None:
+    """Record audio using sounddevice."""
     try:
-        if file:
-            transcribe_file(Path(file), Path(transcriptions))
-        else:
-            transcribe_directory(Path(recordings), Path(transcriptions))
-        print("Done!")
-        sys.exit(0)
+        record_audio(output_dir)
     except Exception as e:
-        print(f"Error: {e}")
+        console.print(f"[red]Error: {e}[/]")
         sys.exit(1)
 
-@cli.command()
-@click.option(
-    "--output-dir", "-o",
-    default="recordings",
-    help="Directory to save recordings"
-)
-def record(output_dir: str):
-    """Record audio using ffmpeg."""
+@app.command()
+def transcribe(
+    file_path: Path = typer.Argument(..., help="Path to the audio file to transcribe"),
+    output_dir: Path = typer.Option(
+        "transcripts",
+        "--output-dir", "-o",
+        help="Directory to save transcriptions"
+    )
+) -> None:
+    """Transcribe an audio file using AssemblyAI."""
     try:
-        record_audio(Path(output_dir))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Transcribe the file
+        transcript = transcribe_file(file_path)
+        
+        # Save the results
+        save_transcript(transcript, output_dir)
+        
+        # Display summary if available
+        if "summary" in transcript:
+            console.print("\n[bold blue]Summary:[/]")
+            console.print(transcript["summary"])
+        
     except Exception as e:
-        print(f"Error: {e}")
+        console.print(f"[red]Error: {e}[/]")
         sys.exit(1)
 
 if __name__ == "__main__":
-    cli() 
+    app() 

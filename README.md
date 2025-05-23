@@ -1,20 +1,21 @@
-# OpenNotes
+directions to brew install blackhole
 
-A Python-based audio recording and transcription tool that uses AssemblyAI for real-time transcription.
+- create aggregate device
 
-## Features
+check mic first
 
-- Real-time audio recording using ffmpeg
-- Live transcription streaming with AssemblyAI
-- Automatic speaker detection
-- Summary generation
-- Support for both live recording and file processing
+Name: Meeting Input
+- check Blackhole 2ch
+- check Macbook Pro Microphone and check drift correction
 
-## Requirements
+- create multioutput device
 
-- Python 3.8+
-- ffmpeg
-- AssemblyAI API key
+check speakers first
+
+Name: Meeting Output
+- check Blackhole 2ch
+- check Macbook Pro Speakers and check drift correction
+
 
 ## Installation
 
