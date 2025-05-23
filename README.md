@@ -19,13 +19,6 @@ git clone https://github.com/alexkroman-assembly/opennotes.git
 cd opennotes
 ```
 
-1. Create a virtual environment and activate it:
-
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-```
-
 1. Install the required packages:
 
 ```bash
@@ -50,13 +43,13 @@ Note: If you don't have Homebrew installed, you can install it from [brew.sh](ht
 
 ### Basic Recording
 
-To start recording from your default microphone:
+To start recording from your microphone:
 
 ```bash
 python transcriber.py record
 ```
 
-### Recording System Audio (macOS)
+### Recording System Audio and Meetings (macOS)
 
 To record system audio on macOS:
 
@@ -65,8 +58,8 @@ To record system audio on macOS:
    - Click the "+" button in the bottom left and select "Create Multi-Output Device"
    - Name it "Audio Router"
    - In the right panel, check the boxes for:
-     - Your speakers (e.g., "MacBook Pro Speakers")
-     - "BlackHole 2ch"
+     - Your speakers (e.g., "MacBook Pro Speakers") - must be first in list
+     - "BlackHole 2ch" - must be second, check drift correction
    - Select "Audio Router" as your system output device in System Settings > Sound
 
 1. Then, create an Aggregate Device for recording:
@@ -74,9 +67,11 @@ To record system audio on macOS:
    - Select "Create Aggregate Device"
    - Name it "Meeting Recorder"
    - In the right panel, check the boxes in this order:
-     - Your microphone (e.g., "MacBook Pro Microphone") to capture your voice
-     - "BlackHole 2ch" to capture system audio
-   - Run the recorder with the Meeting Recorder device:
+     - Your microphone (e.g., "MacBook Pro Microphone") to capture your voice (must be first)
+     - Your speakers (e.g., "MacBook Speakers") to capture your voice (must be second, check drift detection)
+     - "BlackHole 2ch" to capture system audio (must be third, check drift detection)
+
+### Run the Recorder
 
 ```bash
 python transcriber.py record
@@ -104,36 +99,6 @@ To transcribe an existing audio file:
 ```bash
 python transcriber.py transcribe path/to/your/audio/file.mp3
 ```
-
-### Listing Available Devices
-
-To see all available audio input devices:
-
-```bash
-python transcriber.py devices
-```
-
-## Output
-
-The tool creates one directory:
-
-- `recordings/`: Contains the recorded audio files
-
-Each recording session generates:
-
-1. A WAV audio file
-2. A text file with the transcription
-3. A JSON file with detailed transcription data including:
-   - Full transcript
-   - Speaker labels
-   - Auto-highlights
-   - Summary
-
-## Requirements
-
-- Python 3.8 or higher
-- AssemblyAI API key
-- For system audio capture on macOS: [BlackHole](https://github.com/ExistentialAudio/BlackHole)
 
 ## License
 
