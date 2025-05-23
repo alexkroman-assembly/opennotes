@@ -94,11 +94,21 @@ def on_open(ws):
     def stream_audio():
         global stream
         try:
+            # Get device info to determine correct channel count
+            if current_device_id is None:
+                raise Exception("No device selected")
+            
+            device_info = sd.query_devices(current_device_id)
+            channels = device_info['max_input_channels']  # Use all available channels
+            console.print(f"[green]Using {channels} channels for device[/]")
+            if channels > 2:
+                console.print("[yellow]Note: Audio will be downmixed to stereo for transcription[/]")
+            
             with sd.InputStream(
                 samplerate=SAMPLE_RATE,
-                channels=CHANNELS,
+                channels=channels,
                 dtype=DTYPE,
-                device=current_device_id,  # Use the global device ID
+                device=current_device_id,
                 callback=audio_callback
             ):
                 while not stop_event.is_set():
@@ -117,8 +127,16 @@ def audio_callback(indata, frames, time, status):
     if status:
         console.print(f"[yellow]Audio callback status: {status}[/]")
     if not stop_event.is_set() and ws_app and ws_app.sock and ws_app.sock.connected:
-        # Convert to bytes and send
-        audio_data = indata.tobytes()
+        # Convert multi-channel to stereo if needed
+        if indata.shape[1] > 2:
+            # Simple downmix to stereo by averaging channels
+            # For 3 channels: (L+R+C)/3 for left, (L+R+C)/3 for right
+            stereo_data = np.mean(indata, axis=1, keepdims=True)
+            stereo_data = np.repeat(stereo_data, 2, axis=1)  # Duplicate to create stereo
+            audio_data = stereo_data.astype(DTYPE).tobytes()
+        else:
+            audio_data = indata.tobytes()
+            
         ws_app.send(audio_data, websocket.ABNF.OPCODE_BINARY)
         # Store audio data for WAV recording
         recorded_frames.append(audio_data)
@@ -214,35 +232,28 @@ def on_close(ws, close_status_code, close_msg):
         audio_thread.join(timeout=1.0)
 
 def save_audio_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
-    """Save recorded audio frames to an MP3 file."""
+    """Save recorded audio frames to a WAV file."""
     if not recorded_frames:
         console.print("No audio data recorded.")
         return None
     
     # Generate filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = output_dir / f"recorded_audio_{timestamp}.mp3"
+    filename = output_dir / f"recorded_audio_{timestamp}.wav"
     
     try:
-        # First save as temporary WAV file
-        temp_wav = io.BytesIO()
-        with wave.open(temp_wav, 'wb') as wf:
+        with wave.open(str(filename), 'wb') as wf:
             wf.setnchannels(CHANNELS)
             wf.setsampwidth(2)  # 16-bit = 2 bytes
             wf.setframerate(SAMPLE_RATE)
             wf.writeframes(b''.join(recorded_frames))
-        
-        # Convert WAV to MP3
-        temp_wav.seek(0)
-        audio = AudioSegment.from_wav(temp_wav)
-        audio.export(str(filename), format="mp3", bitrate="192k")
         
         console.print(f"Audio saved to: {filename}")
         console.print(f"Duration: {len(recorded_frames) * FRAMES_PER_BUFFER / SAMPLE_RATE:.2f} seconds")
         return filename
         
     except Exception as e:
-        console.print(f"Error saving MP3 file: {e}")
+        console.print(f"Error saving WAV file: {e}")
         return None
 
 def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] = None, show_partials_flag: bool = False) -> None:
@@ -310,7 +321,7 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
             ws_thread.join(timeout=2.0)
         finally:
             console.print("[yellow]Recording stopped.[/]")
-            # Save the MP3 file
+            # Save the WAV file
             audio_file = save_audio_file(output_dir, recorded_frames)
             if audio_file:
                 # Automatically transcribe the saved file
