@@ -1,30 +1,38 @@
 # OpenNotes
 
-A simple command-line tool for real-time audio transcription using AssemblyAI.
+A real-time audio transcription tool that uses AssemblyAI's API to transcribe audio from your computer's microphone or system audio.
 
 ## Features
 
-- 🎙️ Real-time audio recording and transcription
-- 💾 Saves audio as MP3 files
-- 📝 Generates text transcripts and summaries
-- 🤖 AI-powered summaries using Lemur
+- Real-time audio transcription
+- Support for multiple audio input devices
+- Automatic saving of recordings and transcripts
+- Terminal interface with live transcription display
+- Support for system audio capture (e.g., recording from your computer's speakers)
 
 ## Installation
 
-1. Clone the repository:
+1. Clone this repository:
 
 ```bash
 git clone https://github.com/alexkroman-assembly/opennotes.git
 cd opennotes
 ```
 
-1. Install dependencies:
+1. Create a virtual environment and activate it:
+
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+```
+
+1. Install the required packages:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-1. Create a `.env` file with your AssemblyAI API key:
+1. Create a `.env` file in the project root and add your AssemblyAI API key:
 
 ```bash
 ASSEMBLYAI_API_KEY=your_api_key_here
@@ -36,50 +44,97 @@ ASSEMBLYAI_API_KEY=your_api_key_here
 brew install portaudio blackhole-2ch
 ```
 
-## Setting Up System Audio Recording (macOS)
-
-To record your computer's audio:
-
-1. Open Audio MIDI Setup (press Cmd+Space and search for it)
-2. Click the "+" button in the bottom left and select "Create Multi-Output Device"
-3. Name it "System Audio"
-4. Select both "BlackHole 2ch" and your speakers in the right panel
-5. Make sure "BlackHole 2ch" is checked
-6. Close Audio MIDI Setup
-
-Now when you run the recorder, select "BlackHole 2ch" as your input device to capture system audio.
+Note: If you don't have Homebrew installed, you can install it from [brew.sh](https://brew.sh).
 
 ## Usage
 
-1. Start recording:
+### Basic Recording
+
+To start recording from your default microphone:
 
 ```bash
 python transcriber.py record
 ```
 
-1. Transcribe an existing audio file:
+### Recording System Audio (macOS)
+
+To record system audio on macOS:
+
+1. First, create a Multi-Output Device for audio routing:
+   - Open Audio MIDI Setup (Applications > Utilities > Audio MIDI Setup)
+   - Click the "+" button in the bottom left and select "Create Multi-Output Device"
+   - Name it "Audio Router"
+   - In the right panel, check the boxes for:
+     - Your speakers (e.g., "MacBook Pro Speakers")
+     - "BlackHole 2ch"
+   - Select "Audio Router" as your system output device in System Settings > Sound
+
+1. Then, create an Aggregate Device for recording:
+   - In Audio MIDI Setup, click the "+" button again
+   - Select "Create Aggregate Device"
+   - Name it "Meeting Recorder"
+   - In the right panel, check the boxes in this order:
+     - Your microphone (e.g., "MacBook Pro Microphone") to capture your voice
+     - "BlackHole 2ch" to capture system audio
+   - Run the recorder with the Meeting Recorder device:
 
 ```bash
-python transcriber.py transcribe path/to/audio.mp3
+python transcriber.py record
 ```
 
-## Output Files
+This setup will:
 
-The tool creates several files in the `recordings` directory:
+- Route all system audio to both your speakers and BlackHole
+- Record your voice through the microphone
+- Let you hear the meeting through your speakers
+- Capture all system audio (including meeting participants)
+- Create a complete transcript of the entire meeting
+- Create a Lemur powered summary of the entire meeting
 
-- `recorded_audio_TIMESTAMP.mp3` - The recorded audio
-- `transcript_TIMESTAMP_text.txt` - Plain text transcript
-- `transcript_TIMESTAMP_summary.txt` - Default AI-generated summary
-- `transcript_TIMESTAMP_lemur_summary.txt` - Lemur generated summary
+Note: Make sure to test the audio levels before starting an important meeting. You can use the "devices" command to verify your setup:
+
+```bash
+python transcriber.py devices
+```
+
+### Transcribing Existing Audio Files
+
+To transcribe an existing audio file:
+
+```bash
+python transcriber.py transcribe path/to/your/audio/file.mp3
+```
+
+### Listing Available Devices
+
+To see all available audio input devices:
+
+```bash
+python transcriber.py devices
+```
+
+## Output
+
+The tool creates one directory:
+
+- `recordings/`: Contains the recorded audio files
+
+Each recording session generates:
+
+1. A WAV audio file
+2. A text file with the transcription
+3. A JSON file with detailed transcription data including:
+   - Full transcript
+   - Speaker labels
+   - Auto-highlights
+   - Summary
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.8 or higher
 - AssemblyAI API key
-- Audio input device (microphone)
-- PortAudio (for audio capture)
-- BlackHole 2ch (macOS only, for system audio capture)
+- For system audio capture on macOS: [BlackHole](https://github.com/ExistentialAudio/BlackHole)
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the LICENSE file for details.

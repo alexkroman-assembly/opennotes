@@ -20,8 +20,6 @@ import wave
 from requests.adapters import HTTPAdapter  # type: ignore
 from urllib3.util.retry import Retry  # type: ignore
 import pyfiglet  # type: ignore
-from pydub import AudioSegment  # type: ignore
-import io
 
 # Load environment variables
 load_dotenv()
