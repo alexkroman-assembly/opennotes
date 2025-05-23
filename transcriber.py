@@ -342,7 +342,7 @@ def transcribe_file(file_path: Path, options: Optional[Dict[str, Any]] = None, u
         data.update(options)
     
     # Submit transcription request
-    model_type = "SLAM" if use_slam else "regular"
+    model_type = "SLAM" if use_slam else "Universal"
     console.print(f"\n[yellow]Submitting {model_type} transcription request...[/]")
     session = create_session()
     response = session.post(transcript_url, json=data, headers=headers)
@@ -366,6 +366,40 @@ def transcribe_file(file_path: Path, options: Optional[Dict[str, Any]] = None, u
             raise Exception(f"{model_type} transcription failed: {response.json().get('error')}")
         
         time.sleep(3)
+
+def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
+    """Save transcript results to files."""
+    base_path = output_dir / f"transcript-{current_session_id}"
+    
+    # Save text only if available
+    if "text" in transcript and transcript["text"]:
+        with open(f"{base_path}_text.txt", "w") as f:
+            f.write(transcript["text"])
+        console.print(f"[green]✓ Universal transcript text:[/] {base_path}_text.txt")
+    else:
+        console.print("[yellow]No text content found in transcript[/]")
+    
+    # Display the full transcript
+    if "text" in transcript and transcript["text"]:
+        console.print("\n[bold blue]Universal Transcript:[/]")
+        console.print(transcript["text"])
+        
+        # Run Lemur task and save results
+        try:
+            console.print("\n[yellow]Generating Universal Lemur summary...[/]")
+            lemur_result = run_lemur_task(transcript["id"])
+            
+            # Save Lemur response
+            lemur_path = output_dir / f"lemur_summary-{current_session_id}.txt"
+            with open(lemur_path, "w") as f:
+                f.write(lemur_result["response"])
+            console.print(f"[green]✓ Universal Lemur summary:[/] {lemur_path}")
+            
+            # Display Lemur response
+            console.print("\n[bold blue]Universal Lemur Summary:[/]")
+            console.print(lemur_result["response"])
+        except Exception as e:
+            console.print(f"[red]Error generating Universal Lemur summary: {e}[/]")
 
 def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] = None, show_partials_flag: bool = False) -> None:
     """Record audio using sounddevice and stream to AssemblyAI."""
@@ -391,7 +425,7 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
                 if device['max_input_channels'] > 0:
                     console.print(f"- {device['name']}")
             return
-        console.print(f"\n[green]Using input device: {device_name}[/]")
+        console.print(f"\n[green]Using input device:[/] {device_name}")
     
     try:
         # Get device info and set up streaming parameters
@@ -400,7 +434,7 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
             sample_rate = int(device_info['default_samplerate'])
             CONNECTION_PARAMS["sample_rate"] = sample_rate
             API_ENDPOINT = f"{API_ENDPOINT_BASE_URL}?{urlencode(CONNECTION_PARAMS)}"
-            console.print(f"[green]Streaming with sample rate: {sample_rate} Hz[/]")
+            console.print(f"[green]Streaming with sample rate:[/] {sample_rate} Hz")
         
         # Initialize WebSocket connection
         console.print("\n[yellow]Initializing WebSocket connection...[/]\n")
@@ -446,7 +480,7 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
                 audio_file = save_audio_file(current_session_dir, recorded_frames)
                 if audio_file:
                     # Automatically transcribe the saved file
-                    console.print("\n[yellow]Starting automatic transcription...[/]")
+                    console.print("\n[yellow]Starting transcription...[/]")
                     try:
                         # Get regular transcript
                         transcript = transcribe_file(audio_file)
@@ -463,12 +497,28 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
                         if "text" in slam_transcript and slam_transcript["text"]:
                             with open(f"{slam_base_path}_text.txt", "w") as f:
                                 f.write(slam_transcript["text"])
-                            console.print(f"- SLAM text: {slam_base_path}_text.txt")
-                        
-                        if "summary" in slam_transcript and slam_transcript["summary"]:
-                            with open(f"{slam_base_path}_summary.txt", "w") as f:
-                                f.write(slam_transcript["summary"])
-                            console.print(f"- SLAM summary: {slam_base_path}_summary.txt")
+                            console.print(f"[green]✓ SLAM transcript text:[/] {slam_base_path}_text.txt")
+                            
+                            # Display SLAM transcript
+                            console.print("\n[bold blue]SLAM Transcript:[/]")
+                            console.print(slam_transcript["text"])
+                            
+                            # Run Lemur task on SLAM transcript
+                            try:
+                                console.print("\n[yellow]Generating SLAM Lemur summary...[/]")
+                                slam_lemur_result = run_lemur_task(slam_transcript["id"])
+                                
+                                # Save SLAM Lemur response
+                                slam_lemur_path = current_session_dir / f"slam_lemur_summary-{current_session_id}.txt"
+                                with open(slam_lemur_path, "w") as f:
+                                    f.write(slam_lemur_result["response"])
+                                console.print(f"[green]✓ SLAM Lemur summary:[/] {slam_lemur_path}")
+                                
+                                # Display SLAM Lemur response
+                                console.print("\n[bold blue]SLAM Lemur Summary:[/]")
+                                console.print(slam_lemur_result["response"])
+                            except Exception as e:
+                                console.print(f"[red]Error generating SLAM Lemur summary: {e}[/]")
                             
                     except Exception as e:
                         console.print(f"[red]Error during transcription: {e}[/]")
@@ -542,55 +592,6 @@ def run_lemur_task(transcript_id: str) -> Dict[str, Any]:
         raise Exception(f"Lemur task failed: {response.text}")
     
     return response.json()
-
-def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
-    """Save transcript results to files."""
-    base_path = output_dir / f"transcript-{current_session_id}"
-    
-    # Save full transcript
-    with open(f"{base_path}_full.json", "w") as f:
-        json.dump(transcript, f, indent=2)
-    
-    # Save text only if available
-    if "text" in transcript and transcript["text"]:
-        with open(f"{base_path}_text.txt", "w") as f:
-            f.write(transcript["text"])
-        console.print(f"- Text only: {base_path}_text.txt")
-    else:
-        console.print("[yellow]No text content found in transcript[/]")
-    
-    # Save summary if available
-    if "summary" in transcript and transcript["summary"]:
-        with open(f"{base_path}_summary.txt", "w") as f:
-            f.write(transcript["summary"])
-        console.print(f"- Summary: {base_path}_summary.txt")
-    else:
-        console.print("[yellow]No summary found in transcript[/]")
-    
-    console.print("\n[green]Transcript saved to:[/]")
-    console.print(f"- Full transcript: {base_path}_full.json")
-    
-    # Display the full transcript
-    if "text" in transcript and transcript["text"]:
-        console.print("\n[bold blue]Full Transcript:[/]")
-        console.print(transcript["text"])
-        
-        # Run Lemur task and save results
-        try:
-            console.print("\n[yellow]Running Lemur summary task...[/]")
-            lemur_result = run_lemur_task(transcript["id"])
-            
-            # Save Lemur response
-            lemur_path = output_dir / f"lemur_summary-{current_session_id}.txt"
-            with open(lemur_path, "w") as f:
-                f.write(lemur_result["response"])
-            console.print(f"- Lemur summary: {lemur_path}")
-            
-            # Display Lemur response
-            console.print("\n[bold blue]Lemur Summary:[/]")
-            console.print(lemur_result["response"])
-        except Exception as e:
-            console.print(f"[red]Error running Lemur task: {e}[/]")
 
 def prompt_device_selection() -> Optional[str]:
     """Prompt the user to select an input device."""
