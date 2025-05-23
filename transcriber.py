@@ -4,7 +4,7 @@ import sys
 import json
 import threading
 import time
-import requests
+import requests  # type: ignore
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode
@@ -17,8 +17,8 @@ from rich.console import Console  # type: ignore
 from rich.panel import Panel  # type: ignore
 from typing import Optional, List, Dict, Any
 import wave
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter  # type: ignore
+from urllib3.util.retry import Retry  # type: ignore
 import pyfiglet  # type: ignore
 from pydub import AudioSegment  # type: ignore
 import io
@@ -149,7 +149,11 @@ def on_message(ws, message):
                 border_style="green",
                 padding=(1, 2)
             ))
-            console.print("\n[green]Recording started. Press Ctrl+C to stop.[/]\n")
+            console.print(Panel(
+                "[green]Recording started. Press Ctrl+C to stop.[/]",
+                border_style="green",
+                padding=(1, 2)
+            ))
         elif msg_type == "Turn":
             transcript = data.get('transcript', '')
             formatted = data.get('turn_is_formatted', False)
@@ -467,7 +471,7 @@ def save_transcript(transcript: Dict[str, Any], output_dir: Path) -> None:
     else:
         console.print("[yellow]No summary found in transcript[/]")
     
-    console.print(f"\n[green]Transcript saved to:[/]")
+    console.print("\n[green]Transcript saved to:[/]")
     console.print(f"- Full transcript: {base_path}_full.json")
     
     # Display the full transcript

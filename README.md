@@ -1,21 +1,13 @@
-directions to brew install blackhole
+# OpenNotes
 
-- create aggregate device
+A simple command-line tool for real-time audio transcription using AssemblyAI.
 
-check mic first
+## Features
 
-Name: Meeting Input
-- check Blackhole 2ch
-- check Macbook Pro Microphone and check drift correction
-
-- create multioutput device
-
-check speakers first
-
-Name: Meeting Output
-- check Blackhole 2ch
-- check Macbook Pro Speakers and check drift correction
-
+- 🎙️ Real-time audio recording and transcription
+- 💾 Saves audio as MP3 files
+- 📝 Generates text transcripts and summaries
+- 🤖 AI-powered summaries using Lemur
 
 ## Installation
 
@@ -40,30 +32,38 @@ ASSEMBLYAI_API_KEY=your_api_key_here
 
 ## Usage
 
-1. To start recording and transcribing:
+1. List available audio devices:
+
+```bash
+python transcriber.py devices
+```
+
+1. Start recording:
 
 ```bash
 python transcriber.py record
 ```
 
-1. To transcribe an existing audio file:
+1. Transcribe an existing audio file:
 
 ```bash
-python transcriber.py transcribe --file path/to/audio.wav
+python transcriber.py transcribe path/to/audio.mp3
 ```
 
-1. To transcribe all WAV files in a directory:
+## Output Files
 
-```bash
-python transcriber.py transcribe --recordings path/to/recordings --transcriptions path/to/output
-```
+The tool creates several files in the `recordings` directory:
 
-## Output
+- `recorded_audio_TIMESTAMP.mp3` - The recorded audio
+- `transcript_TIMESTAMP_text.txt` - Plain text transcript
+- `transcript_TIMESTAMP_summary.txt` - AI-generated summary
+- `transcript_TIMESTAMP_lemur_summary.txt` - Detailed AI analysis
 
-The tool generates two types of files for each recording:
+## Requirements
 
-1. A transcript file (`.txt`) containing the full conversation with speaker labels
-1. A summary file (`_summary.txt`) containing an AI-generated summary of the conversation
+- Python 3.8+
+- AssemblyAI API key
+- Audio input device (microphone)
 
 ## License
 
