@@ -302,6 +302,71 @@ def save_audio_file(output_dir: Path, recorded_frames: list) -> Optional[Path]:
             console.print(f"- Device channels: {channels}")
         return None
 
+def transcribe_file(file_path: Path, options: Optional[Dict[str, Any]] = None, use_slam: bool = False) -> Dict[str, Any]:
+    """Transcribe a file using AssemblyAI.
+    
+    Args:
+        file_path: Path to the audio file
+        options: Optional additional parameters for the API request
+        use_slam: Whether to use the SLAM model (default: False)
+    """
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+    
+    # Upload the file
+    upload_url = upload_file(file_path)
+    
+    # Prepare transcription request
+    transcript_url = "https://api.assemblyai.com/v2/transcript"
+    headers = {
+        "authorization": API_KEY,
+        "content-type": "application/json"
+    }
+    
+    data = {
+        "audio_url": upload_url,
+        "punctuate": True,
+        "format_text": True,
+        "speaker_labels": True,
+        "auto_highlights": True,
+        "summarization": True,
+        "summary_model": "informative",
+        "summary_type": "bullets"
+    }
+    
+    # Add SLAM model if requested
+    if use_slam:
+        data["speech_model"] = "slam-1"
+    
+    if options:
+        data.update(options)
+    
+    # Submit transcription request
+    model_type = "SLAM" if use_slam else "regular"
+    console.print(f"\n[yellow]Submitting {model_type} transcription request...[/]")
+    session = create_session()
+    response = session.post(transcript_url, json=data, headers=headers)
+    
+    if response.status_code != 200:
+        raise Exception(f"{model_type} transcription request failed with status {response.status_code}: {response.text}")
+    
+    transcript_id = response.json()["id"]
+    
+    # Poll for completion
+    console.print(f"\n[yellow]Waiting for {model_type} transcription to complete...[/]")
+    while True:
+        response = session.get(f"{transcript_url}/{transcript_id}", headers=headers)
+        if response.status_code != 200:
+            raise Exception(f"Failed to get {model_type} transcript status: {response.text}")
+        
+        status = response.json()["status"]
+        if status == "completed":
+            return response.json()
+        elif status == "error":
+            raise Exception(f"{model_type} transcription failed: {response.json().get('error')}")
+        
+        time.sleep(3)
+
 def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] = None, show_partials_flag: bool = False) -> None:
     """Record audio using sounddevice and stream to AssemblyAI."""
     # Ensure output_dir is set to 'recordings' if not provided
@@ -388,7 +453,7 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
                         save_transcript(transcript, current_session_dir)
                         
                         # Get SLAM transcript
-                        slam_transcript = transcribe_file_slam(audio_file)
+                        slam_transcript = transcribe_file(audio_file, use_slam=True)
                         slam_base_path = current_session_dir / f"slam-{current_session_id}"
                         
                         # Save SLAM transcript files
@@ -456,115 +521,6 @@ def upload_file(file_path: Path) -> str:
             retry_delay *= 2  # Exponential backoff
     
     raise Exception("Failed to upload file after multiple attempts")
-
-def transcribe_file(file_path: Path, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Transcribe a file using AssemblyAI."""
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-    
-    # Upload the file
-    upload_url = upload_file(file_path)
-    
-    # Prepare transcription request
-    transcript_url = "https://api.assemblyai.com/v2/transcript"
-    headers = {
-        "authorization": API_KEY,
-        "content-type": "application/json"
-    }
-    
-    data = {
-        "audio_url": upload_url,
-        "punctuate": True,
-        "format_text": True,
-        "speaker_labels": True,
-        "auto_highlights": True,
-        "summarization": True,
-        "summary_model": "informative",
-        "summary_type": "bullets"
-    }
-    
-    if options:
-        data.update(options)
-    
-    # Submit transcription request
-    console.print("\n[yellow]Submitting transcription request...[/]")
-    session = create_session()
-    response = session.post(transcript_url, json=data, headers=headers)
-    
-    if response.status_code != 200:
-        raise Exception(f"Transcription request failed with status {response.status_code}: {response.text}")
-    
-    transcript_id = response.json()["id"]
-    
-    # Poll for completion
-    console.print("\n[yellow]Waiting for transcription to complete...[/]")
-    while True:
-        response = session.get(f"{transcript_url}/{transcript_id}", headers=headers)
-        if response.status_code != 200:
-            raise Exception(f"Failed to get transcript status: {response.text}")
-        
-        status = response.json()["status"]
-        if status == "completed":
-            return response.json()
-        elif status == "error":
-            raise Exception(f"Transcription failed: {response.json().get('error')}")
-        
-        time.sleep(3)
-
-def transcribe_file_slam(file_path: Path, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Transcribe a file using AssemblyAI's SLAM model."""
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-    
-    # Upload the file
-    upload_url = upload_file(file_path)
-    
-    # Prepare transcription request
-    transcript_url = "https://api.assemblyai.com/v2/transcript"
-    headers = {
-        "authorization": API_KEY,
-        "content-type": "application/json"
-    }
-    
-    data = {
-        "audio_url": upload_url,
-        "punctuate": True,
-        "format_text": True,
-        "speaker_labels": True,
-        "auto_highlights": True,
-        "summarization": True,
-        "summary_model": "informative",
-        "summary_type": "bullets",
-        "speech_model": "slam-1"  # Add SLAM model parameter
-    }
-    
-    if options:
-        data.update(options)
-    
-    # Submit transcription request
-    console.print("\n[yellow]Submitting SLAM transcription request...[/]")
-    session = create_session()
-    response = session.post(transcript_url, json=data, headers=headers)
-    
-    if response.status_code != 200:
-        raise Exception(f"SLAM transcription request failed with status {response.status_code}: {response.text}")
-    
-    transcript_id = response.json()["id"]
-    
-    # Poll for completion
-    console.print("\n[yellow]Waiting for SLAM transcription to complete...[/]")
-    while True:
-        response = session.get(f"{transcript_url}/{transcript_id}", headers=headers)
-        if response.status_code != 200:
-            raise Exception(f"Failed to get SLAM transcript status: {response.text}")
-        
-        status = response.json()["status"]
-        if status == "completed":
-            return response.json()
-        elif status == "error":
-            raise Exception(f"SLAM transcription failed: {response.json().get('error')}")
-        
-        time.sleep(3)
 
 def run_lemur_task(transcript_id: str) -> Dict[str, Any]:
     """Run a Lemur task on the transcript."""
