@@ -383,9 +383,28 @@ def record_audio(output_dir: Optional[Path] = None, device_name: Optional[str] =
                     # Automatically transcribe the saved file
                     console.print("\n[yellow]Starting automatic transcription...[/]")
                     try:
+                        # Get regular transcript
                         transcript = transcribe_file(audio_file)
-                        # Save transcript in the session directory
                         save_transcript(transcript, current_session_dir)
+                        
+                        # Get SLAM transcript
+                        slam_transcript = transcribe_file_slam(audio_file)
+                        slam_base_path = current_session_dir / f"slam-{current_session_id}"
+                        
+                        # Save SLAM transcript files
+                        with open(f"{slam_base_path}_full.json", "w") as f:
+                            json.dump(slam_transcript, f, indent=2)
+                        
+                        if "text" in slam_transcript and slam_transcript["text"]:
+                            with open(f"{slam_base_path}_text.txt", "w") as f:
+                                f.write(slam_transcript["text"])
+                            console.print(f"- SLAM text: {slam_base_path}_text.txt")
+                        
+                        if "summary" in slam_transcript and slam_transcript["summary"]:
+                            with open(f"{slam_base_path}_summary.txt", "w") as f:
+                                f.write(slam_transcript["summary"])
+                            console.print(f"- SLAM summary: {slam_base_path}_summary.txt")
+                            
                     except Exception as e:
                         console.print(f"[red]Error during transcription: {e}[/]")
 
@@ -489,6 +508,61 @@ def transcribe_file(file_path: Path, options: Optional[Dict[str, Any]] = None) -
             return response.json()
         elif status == "error":
             raise Exception(f"Transcription failed: {response.json().get('error')}")
+        
+        time.sleep(3)
+
+def transcribe_file_slam(file_path: Path, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Transcribe a file using AssemblyAI's SLAM model."""
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+    
+    # Upload the file
+    upload_url = upload_file(file_path)
+    
+    # Prepare transcription request
+    transcript_url = "https://api.assemblyai.com/v2/transcript"
+    headers = {
+        "authorization": API_KEY,
+        "content-type": "application/json"
+    }
+    
+    data = {
+        "audio_url": upload_url,
+        "punctuate": True,
+        "format_text": True,
+        "speaker_labels": True,
+        "auto_highlights": True,
+        "summarization": True,
+        "summary_model": "informative",
+        "summary_type": "bullets",
+        "speech_model": "slam-1"  # Add SLAM model parameter
+    }
+    
+    if options:
+        data.update(options)
+    
+    # Submit transcription request
+    console.print("\n[yellow]Submitting SLAM transcription request...[/]")
+    session = create_session()
+    response = session.post(transcript_url, json=data, headers=headers)
+    
+    if response.status_code != 200:
+        raise Exception(f"SLAM transcription request failed with status {response.status_code}: {response.text}")
+    
+    transcript_id = response.json()["id"]
+    
+    # Poll for completion
+    console.print("\n[yellow]Waiting for SLAM transcription to complete...[/]")
+    while True:
+        response = session.get(f"{transcript_url}/{transcript_id}", headers=headers)
+        if response.status_code != 200:
+            raise Exception(f"Failed to get SLAM transcript status: {response.text}")
+        
+        status = response.json()["status"]
+        if status == "completed":
+            return response.json()
+        elif status == "error":
+            raise Exception(f"SLAM transcription failed: {response.json().get('error')}")
         
         time.sleep(3)
 
